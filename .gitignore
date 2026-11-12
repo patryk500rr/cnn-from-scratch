@@ -1,0 +1,16 @@
+# dane i wyniki
+data/
+results/
+*.npz
+*.npy
+*.pkl
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# systemowe
+.DS_Store
