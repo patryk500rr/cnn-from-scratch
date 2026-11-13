@@ -1,3 +1,8 @@
+"""Layers and loss for a numpy neural network.
+
+Each layer implements forward(x) and backward(dout). Layers with parameters
+store their gradients in self.grads. Shapes use channels-last (m, ...) batches.
+"""
 import numpy as np
 
 
@@ -131,15 +136,15 @@ class SoftmaxCrossEntropy:
         self.cache['Y_hat'] = Y_hat  # (m, n_classes), used in backward
         self.cache['Y'] = Y
 
-        log_Y_hat = Z - np.max(Z) - np.log(np.sum(np.exp(Z - np.max(Z)), axis=1, keepdims=True))
+        log_Y_hat = Z - np.log(np.sum(np.exp(Z), axis=1, keepdims=True))
         loss = -(1/len(Y)) * np.sum(Y * log_Y_hat)
         return loss
 
-    def backward(self, Y):
+    def backward(self):
         """Gradient of the cross-entropy loss w.r.t. Z (see class WARNING).
 
         Args:
-            Y (np.ndarray): one-hot labels, shape (m, n_classes).
+            None
 
         Returns:
             np.ndarray: dZ, shape (m, n_classes).
@@ -219,9 +224,9 @@ class Flatten:
         Returns:
             np.ndarray: gradient reshaped to the input shape, e.g. (m, H, W, C).
         """
-        dA_flat = A_flat.reshape(self.cache['A_shape'])
-        self.grads['dA_flat'] = dA_flat
-        return dA_flat
+        dA = A_flat.reshape(self.cache['A_shape'])
+        self.grads['dA_flat'] = dA
+        return dA
     
 class Sigmoid:
     """Element-wise sigmoid activation: A = 1 / (1 + exp(-Z)).

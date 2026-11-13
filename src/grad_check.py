@@ -3,7 +3,6 @@ with centered finite differences (J(theta + eps) - J(theta - eps)) / (2 * eps).
 """
 import numpy as np
 
-rng = np.random.default_rng(123)  # fixed seed, so the sampled coordinates are reproducible
 
 
 def compute_loss(model, loss, X, Y):
@@ -22,7 +21,7 @@ def compute_loss(model, loss, X, Y):
     J = loss.forward(Z, Y)
     return J
 
-def grad_check(model, loss, X, Y, eps, n_samples):
+def grad_check(model, loss, X, Y, eps, n_samples, rng):
     """Compare analytic and numerical gradients for every parameter of the model.
 
     For each parameter, up to n_samples randomly chosen entries are checked.
@@ -36,6 +35,7 @@ def grad_check(model, loss, X, Y, eps, n_samples):
         Y (np.ndarray): one-hot labels, float64, shape (m, n_classes).
         eps (float): perturbation size, e.g. 1e-7.
         n_samples (int): maximum number of entries to check per parameter.
+        rng (np.random.Generator): generator used to choose which entries to check.
 
     Returns:
         dict: maps a description such as 'W, layer: 0, shape: (5, 6)' to the
@@ -44,7 +44,7 @@ def grad_check(model, loss, X, Y, eps, n_samples):
     """
 
     compute_loss(model, loss, X, Y)
-    dZ = loss.backward(Y)
+    dZ = loss.backward()
     model.backward(dZ)
     params = model.parameters()
 
