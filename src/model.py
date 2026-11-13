@@ -1,3 +1,6 @@
+"""Model container: runs a list of layers forward and backward in sequence."""
+
+
 class Sequential:
     """Ordered container of layers. Runs them forward and backward in sequence.
 
