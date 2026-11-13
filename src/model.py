@@ -1,5 +1,6 @@
 """Model container: runs a list of layers forward and backward in sequence."""
-
+import inspect
+import numpy as np
 
 class Sequential:
     """Ordered container of layers. Runs them forward and backward in sequence.
@@ -12,13 +13,15 @@ class Sequential:
         model.backward(dZ)
     """
 
-    def __init__(self, layers):
+    def __init__(self, layers, input_shape, rng):
         """Store the layers in order, from input to output.
 
         Args:
             layers (list): layer objects. Each must implement forward(x) and backward(dx).
         """
         self.layers = layers
+        self.input_shape = input_shape
+        self.rng = rng
 
     def forward(self, X):
         """Pass X through all layers in order.
@@ -62,3 +65,42 @@ class Sequential:
                 pairs.append((layer.b, layer.grads['db']))  # (n_out,), (n_out,)
         return pairs
 
+    
+    def build(self):
+        input_shape = self.input_shape
+        for layer in self.layers:
+            if 'rng' in inspect.signature(layer.build).parameters:
+                output_shape = layer.build(input_shape, self.rng)
+            else:
+                output_shape = layer.build(input_shape)
+
+            input_shape = output_shape
+
+    def summary(self):
+        params_dict = {}
+        shapes_dict = {}
+        layers_count = {}
+        input_shape = self.input_shape
+
+        for layer in self.layers:
+            if 'rng' in inspect.signature(layer.build).parameters:
+                output_shape, n_params = layer.build(input_shape, self.rng, return_nparams=True)
+            else:
+                output_shape, n_params = layer.build(input_shape, return_nparams=True)
+
+            layer_name = layer.name()
+            
+            if layer_name not in layers_count.keys():
+                layers_count[layer_name] = 1
+            else:
+                layers_count[layer_name] += 1
+            
+            layer_name = layer_name + ' ' + str(layers_count[layer_name])
+            params_dict[layer_name] = n_params
+            shapes_dict[layer_name] = [input_shape, output_shape]
+
+            input_shape = output_shape
+
+        params_dict['Total Parameters'] = int(np.sum(list(params_dict.values())))
+
+        return params_dict, shapes_dict

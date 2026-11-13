@@ -62,7 +62,7 @@ class Dense:
 
         return dA
     
-    def build(self, input_shape, rng):
+    def build(self, input_shape, rng, return_nparams=False):
         """Create W and b from the input size and the number of outputs.
 
         Args:
@@ -75,7 +75,15 @@ class Dense:
         n_in = input_shape[0]
         self.W = rng.standard_normal((n_in, self.n_out)) * 0.1
         self.b = np.zeros(self.n_out)
-        return (self.n_out, )
+
+        if return_nparams:
+            n_params = n_in * self.n_out + self.n_out
+            return (self.n_out, ), n_params
+        else:
+            return (self.n_out, )
+        
+    def name(self):
+        return 'Dense'
     
 class ReLU:
     """Element-wise ReLU activation: A = max(0, Z).
@@ -114,7 +122,7 @@ class ReLU:
         self.grads['dZ'] = dZ
         return dZ
     
-    def build(self, input_shape):
+    def build(self, input_shape, return_nparams=False):
         """Return the output shape. The activation is element-wise and has no parameters.
 
         Args:
@@ -123,7 +131,13 @@ class ReLU:
         Returns:
             tuple: output shape, the same as input_shape.
         """
-        return input_shape
+        if return_nparams:
+            return input_shape, 0
+        else:
+            return input_shape
+        
+    def name(self):
+        return 'ReLU'
 
 class SoftmaxCrossEntropy:
     """Softmax followed by cross-entropy loss, used as the last layer.
@@ -214,7 +228,7 @@ class Tanh:
         self.grads['dZ'] = dZ
         return dZ
     
-    def build(self, input_shape):
+    def build(self, input_shape, return_nparams=False):
         """Return the output shape. The activation is element-wise and has no parameters.
 
         Args:
@@ -223,8 +237,14 @@ class Tanh:
         Returns:
             tuple: output shape, the same as input_shape.
         """
-        return input_shape
-    
+        if return_nparams:
+            return input_shape, 0
+        else:
+            return input_shape
+
+    def name(self):
+        return 'Tanh'
+        
 class Flatten:
     """Reshape each example to a vector: (m, H, W, C) -> (m, H*W*C).
 
@@ -262,7 +282,7 @@ class Flatten:
         self.grads['dA_flat'] = dA
         return dA
 
-    def build(self, input_shape):
+    def build(self, input_shape, return_nparams=False):
         """Return the output shape: all dimensions of one example multiplied together.
 
         Args:
@@ -271,7 +291,13 @@ class Flatten:
         Returns:
             tuple: output shape (H * W * C,).
         """
-        return (int(np.prod(input_shape)),)
+        if return_nparams:
+            return (int(np.prod(input_shape)),), 0
+        else:
+            return (int(np.prod(input_shape)),)
+        
+    def name(self):
+        return 'Flatten'
     
 class Sigmoid:
     """Element-wise sigmoid activation: A = 1 / (1 + exp(-Z)).
@@ -310,7 +336,7 @@ class Sigmoid:
         dZ = dA * self.cache['A'] * (1 - self.cache['A'])
         self.grads['dZ'] = dZ
         return dZ
-    def build(self, input_shape):
+    def build(self, input_shape, return_nparams=False):
         """Return the output shape. The activation is element-wise and has no parameters.
 
         Args:
@@ -319,7 +345,13 @@ class Sigmoid:
         Returns:
             tuple: output shape, the same as input_shape.
         """
-        return input_shape
+        if return_nparams:
+            return input_shape, 0
+        else:
+            return input_shape
+        
+    def name(self):
+        return 'Sigmoid'
 
 class conv_naive:
     """Convolution layer computed with explicit Python loops (reference implementation).
@@ -515,7 +547,7 @@ class MaxPool2d:
         self.grads['dA_prev'] = dA_prev
         return dA_prev
     
-    def build(self, input_shape):
+    def build(self, input_shape, return_nparams=False):
         """Return the output shape of the pooling. No parameters are created.
 
         Args:
@@ -527,7 +559,13 @@ class MaxPool2d:
         n_H_prev, n_W_prev, n_C = input_shape
         n_H = (n_H_prev - self.f) // self.s + 1
         n_W = (n_W_prev - self.f) // self.s + 1
-        return (int(n_H), int(n_W), int(n_C))
+        if return_nparams:
+            return (int(n_H), int(n_W), int(n_C)), 0
+        else:
+            return (int(n_H), int(n_W), int(n_C))
+        
+    def name(self):
+        return 'MaxPool2d'
 
 class AvgPool2d:
     """Average pooling: each f x f window (moved with stride s) is replaced by its mean.
@@ -605,7 +643,7 @@ class AvgPool2d:
         self.grads['dA_prev'] = dA_prev
         return dA_prev
     
-    def build(self, input_shape):
+    def build(self, input_shape, return_nparams=False):
         """Return the output shape of the pooling. No parameters are created.
 
         Args:
@@ -617,7 +655,13 @@ class AvgPool2d:
         n_H_prev, n_W_prev, n_C = input_shape
         n_H = (n_H_prev - self.f) // self.s + 1
         n_W = (n_W_prev - self.f) // self.s + 1
-        return (int(n_H), int(n_W), int(n_C))
+        if return_nparams:
+            return (int(n_H), int(n_W), int(n_C)), 0
+        else:
+            return (int(n_H), int(n_W), int(n_C))
+        
+    def name(self):
+        return 'AvgPool2d'
     
 class GlobalAvgPool:
     """Global average pooling: the mean of each whole feature map, one number per channel.
@@ -682,7 +726,7 @@ class GlobalAvgPool:
         self.grads['dA_prev'] = dA_prev
         return dA_prev
             
-    def build(self, input_shape):
+    def build(self, input_shape, return_nparams=False):
         """Return the output shape: one number per channel.
 
         Args:
@@ -691,7 +735,13 @@ class GlobalAvgPool:
         Returns:
             tuple: output shape (n_C,).
         """
-        return (input_shape[-1],)
+        if return_nparams:
+            return (input_shape[-1],), 0
+        else:
+            return (input_shape[-1],)
+        
+    def name(self):
+        return 'GlobalAvgPool'
 
 class Conv2d:
     """Convolution layer. The filters and biases are created in build(), not in __init__.
@@ -794,7 +844,7 @@ class Conv2d:
 
         return dA
     
-    def build(self, input_shape, rng):
+    def build(self, input_shape, rng, return_nparams=False):
         """Create the filters and biases from the input shape and return the output shape.
 
         Args:
@@ -812,7 +862,14 @@ class Conv2d:
             p = (n_H_prev * (self.s - 1) + self.f - self.s) // 2
         n_H = (n_H_prev + 2 * p - self.f) // self.s + 1
         n_W = (n_W_prev + 2 * p - self.f) // self.s + 1
-        return (int(n_H), int(n_W), self.n_C)
+        if return_nparams:
+            nparams = self.f * self.f * n_C_prev * self.n_C + self.n_C
+            return (int(n_H), int(n_W), self.n_C), nparams
+        else:
+            return (int(n_H), int(n_W), self.n_C)
+        
+    def name(self):
+        return 'Conv2d'
 
         
 
