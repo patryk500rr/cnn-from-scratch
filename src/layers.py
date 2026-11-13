@@ -385,7 +385,7 @@ class conv_naive:
         return dA
     
 
-class MaxPool2d:
+class MaxPool2d_naive:
     """Max pooling: each f x f window (moved with stride s) is replaced by its maximum.
 
     Shapes:
@@ -463,7 +463,7 @@ class MaxPool2d:
         return dA_prev
     
 
-class AvgPool2d:
+class AvgPool2d_naive:
     """Average pooling: each f x f window (moved with stride s) is replaced by its mean.
 
     Shapes:
@@ -604,8 +604,84 @@ class GlobalAvgPool:
         return dA_prev
             
 
+class Conv2d:
+    def __init__(self, W, b, s, p):
+        self.W = W
+        self.b = b
+        self.s = s
+        self.p = p
+        self.cache = {}
+        self.grads = {}
+
+    def forward(self, A_prev):
+        s = self.s
+        p = self.p
+        n_H_prev = A_prev.shape[1]
+        f = self.W.shape[0]
+
+        if p == 'same':
+            p_numenator = (n_H_prev * (s - 1) + f - s)
+            assert p_numenator % 2 == 0
+            p = p_numenator // 2
+        A_prev_pad = np.pad(A_prev, ((0, 0), (p, p), (p, p), (0, 0)))
+
+        windows_stride1 = np.lib.stride_tricks.sliding_window_view(A_prev_pad, axis=(1, 2), window_shape=(f, f))
+        windows = windows_stride1[:, ::s, ::s]
+
+        A = np.tensordot(windows, self.W, axes=([3, 4, 5], [2, 0, 1])) + self.b
+
+        self.cache['A_prev'] = A_prev
+        self.cache['p'] = p
+        self.cache['s'] = s
+
+        return A
+    
+    def backward(self, dZ): 
+        """
+            W (f, f, n_C_prev, n_C)
+            b (n_C, )
+            A_prev (m, n_H_prev, n_H_prev, n_C_prev)
+            Z (m, n_H, n_H, n_C)
+            dZ (m, n_H, n_H, n_C)
+            windows (m, n_H, n_H, n_C_prev, f, f)
+        """
+        A_prev = self.cache['A_prev'] 
+        n_H_prev = A_prev.shape[1]
+        n_C_prev = A_prev.shape[-1]
+        n_H = dZ.shape[1]
+        n_C = dZ.shape[-1]
+        m = dZ.shape[0]
+        p = self.p
+        s = self.s
+        f = self.W.shape[0]
+        A_prev_pad = np.pad(A_prev, ((0, 0), (p, p), (p, p), (0, 0))) 
 
 
+        windows_stride1 = np.lib.stride_tricks.sliding_window_view(A_prev_pad, axis=(1, 2), window_shape=(f, f))
+        windows = windows_stride1[:, ::s, ::s]
+
+        dW = np.tensordot(windows, dZ, ([0, 1, 2], [0, 1, 2])).transpose(1, 2, 0, 3)
+        db = np.sum(dZ, axis=(0, 1, 2))
+
+        dA_pad_windows = np.tensordot(self.W, dZ, ([3], [3])) # (f, f, n_C, m, n_H_prev, n_H_prev)
+        dA_pad = np.zeros((m, n_H_prev + 2*p, n_H_prev + 2*p, n_C_prev))
+        for i in range(m):
+            for row in range(n_H):
+                for col in range(n_H):
+                    contribution = dA_pad_windows[:, :, :, i, row, col]
+                    dA_pad[i, s*row:s*row + f, s*col:s*col + f, :] += contribution
+
+        self.grads['dW'] = dW
+        self.grads['db'] = db
+
+        if p != 0:
+            dA = dA_pad[:, p:-p, p:-p]
+        else:
+            dA = dA_pad
+        self.grads['dA'] = dA
+
+        return dA
+        
 
         
         
