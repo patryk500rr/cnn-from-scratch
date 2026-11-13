@@ -16,17 +16,16 @@ class Dense:
         Z: (m, n_out)  output
     """
 
-    def __init__(self, W, b):
+    def __init__(self, n_out):
         """Store the parameters and create empty cache and gradient dicts.
 
         Args:
             W (np.ndarray): weights, shape (n_in, n_out).
             b (np.ndarray): biases, shape (n_out,).
         """
-        self.W = W  # (n_in, n_out)
-        self.b = b  # (n_out,)
         self.cache = {}  # values saved in forward, needed by backward
         self.grads = {}  # parameter gradients, filled in backward
+        self.n_out = n_out
 
     def forward(self, A):
         """Compute Z = A @ W + b and save A for the backward pass.
@@ -62,8 +61,22 @@ class Dense:
         self.grads['db'] = db
 
         return dA
+    
+    def build(self, input_shape, rng):
+        """Create W and b from the input size and the number of outputs.
 
+        Args:
+            input_shape (tuple): shape of one example, e.g. (n_in,), without the batch axis.
+            rng (np.random.Generator): generator used to initialize W.
 
+        Returns:
+            tuple: output shape (n_out,).
+        """
+        n_in = input_shape[0]
+        self.W = rng.standard_normal((n_in, self.n_out)) * 0.1
+        self.b = np.zeros(self.n_out)
+        return (self.n_out, )
+    
 class ReLU:
     """Element-wise ReLU activation: A = max(0, Z).
 
@@ -100,7 +113,17 @@ class ReLU:
         dZ = dA * (self.cache['Z'] > 0).astype('float32')  # mask has the same shape as Z
         self.grads['dZ'] = dZ
         return dZ
+    
+    def build(self, input_shape):
+        """Return the output shape. The activation is element-wise and has no parameters.
 
+        Args:
+            input_shape (tuple): shape of one example, without the batch axis.
+
+        Returns:
+            tuple: output shape, the same as input_shape.
+        """
+        return input_shape
 
 class SoftmaxCrossEntropy:
     """Softmax followed by cross-entropy loss, used as the last layer.
@@ -191,6 +214,17 @@ class Tanh:
         self.grads['dZ'] = dZ
         return dZ
     
+    def build(self, input_shape):
+        """Return the output shape. The activation is element-wise and has no parameters.
+
+        Args:
+            input_shape (tuple): shape of one example, without the batch axis.
+
+        Returns:
+            tuple: output shape, the same as input_shape.
+        """
+        return input_shape
+    
 class Flatten:
     """Reshape each example to a vector: (m, H, W, C) -> (m, H*W*C).
 
@@ -227,6 +261,17 @@ class Flatten:
         dA = A_flat.reshape(self.cache['A_shape'])
         self.grads['dA_flat'] = dA
         return dA
+
+    def build(self, input_shape):
+        """Return the output shape: all dimensions of one example multiplied together.
+
+        Args:
+            input_shape (tuple): shape of one example, e.g. (H, W, C), without the batch axis.
+
+        Returns:
+            tuple: output shape (H * W * C,).
+        """
+        return (int(np.prod(input_shape)),)
     
 class Sigmoid:
     """Element-wise sigmoid activation: A = 1 / (1 + exp(-Z)).
@@ -265,7 +310,16 @@ class Sigmoid:
         dZ = dA * self.cache['A'] * (1 - self.cache['A'])
         self.grads['dZ'] = dZ
         return dZ
+    def build(self, input_shape):
+        """Return the output shape. The activation is element-wise and has no parameters.
 
+        Args:
+            input_shape (tuple): shape of one example, without the batch axis.
+
+        Returns:
+            tuple: output shape, the same as input_shape.
+        """
+        return input_shape
 
 class conv_naive:
     """Convolution layer computed with explicit Python loops (reference implementation).
@@ -382,10 +436,9 @@ class conv_naive:
         self.grads['dW'] = dW
         self.grads['db'] = db
         self.grads['dA'] = dA
-        return dA
-    
+        return dA    
 
-class MaxPool2d_naive:
+class MaxPool2d:
     """Max pooling: each f x f window (moved with stride s) is replaced by its maximum.
 
     Shapes:
@@ -462,8 +515,21 @@ class MaxPool2d_naive:
         self.grads['dA_prev'] = dA_prev
         return dA_prev
     
+    def build(self, input_shape):
+        """Return the output shape of the pooling. No parameters are created.
 
-class AvgPool2d_naive:
+        Args:
+            input_shape (tuple): shape of one example (n_H_prev, n_W_prev, n_C), without the batch axis.
+
+        Returns:
+            tuple: output shape (n_H, n_W, n_C) with integer sizes.
+        """
+        n_H_prev, n_W_prev, n_C = input_shape
+        n_H = (n_H_prev - self.f) // self.s + 1
+        n_W = (n_W_prev - self.f) // self.s + 1
+        return (int(n_H), int(n_W), int(n_C))
+
+class AvgPool2d:
     """Average pooling: each f x f window (moved with stride s) is replaced by its mean.
 
     Shapes:
@@ -539,7 +605,20 @@ class AvgPool2d_naive:
         self.grads['dA_prev'] = dA_prev
         return dA_prev
     
+    def build(self, input_shape):
+        """Return the output shape of the pooling. No parameters are created.
 
+        Args:
+            input_shape (tuple): shape of one example (n_H_prev, n_W_prev, n_C), without the batch axis.
+
+        Returns:
+            tuple: output shape (n_H, n_W, n_C) with integer sizes.
+        """
+        n_H_prev, n_W_prev, n_C = input_shape
+        n_H = (n_H_prev - self.f) // self.s + 1
+        n_W = (n_W_prev - self.f) // self.s + 1
+        return (int(n_H), int(n_W), int(n_C))
+    
 class GlobalAvgPool:
     """Global average pooling: the mean of each whole feature map, one number per channel.
 
@@ -603,17 +682,51 @@ class GlobalAvgPool:
         self.grads['dA_prev'] = dA_prev
         return dA_prev
             
+    def build(self, input_shape):
+        """Return the output shape: one number per channel.
+
+        Args:
+            input_shape (tuple): shape of one example (H, W, n_C), without the batch axis.
+
+        Returns:
+            tuple: output shape (n_C,).
+        """
+        return (input_shape[-1],)
 
 class Conv2d:
-    def __init__(self, W, b, s, p):
-        self.W = W
-        self.b = b
+    """Convolution layer. The filters and biases are created in build(), not in __init__.
+
+    Shapes:
+        A_prev: (m, n_H_prev, n_W_prev, n_C_prev)   input of this layer
+        W:      (f, f, n_C_prev, n_C)                created in build()
+        b:      (n_C,)                               created in build()
+        output: (m, n_H, n_W, n_C)                   before any activation
+    """
+    def __init__(self, n_C, f, s, p):
+        """Store the hyperparameters. The weights are created later, in build().
+
+        Args:
+            n_C (int): number of filters, i.e. channels of the output.
+            f (int): side length of the square filter.
+            s (int): stride.
+            p (int or 'same'): padding, or 'same' to keep the size when stride is 1.
+        """
         self.s = s
         self.p = p
+        self.f = f
+        self.n_C = n_C
         self.cache = {}
         self.grads = {}
 
     def forward(self, A_prev):
+        """Convolve A_prev with the filters and save A_prev for the backward pass.
+
+        Args:
+            A_prev (np.ndarray): input, shape (m, n_H_prev, n_W_prev, n_C_prev).
+
+        Returns:
+            np.ndarray: output (called A in the code), shape (m, n_H, n_W, n_C), before any activation.
+        """
         s = self.s
         p = self.p
         n_H_prev = A_prev.shape[1]
@@ -628,13 +741,13 @@ class Conv2d:
         windows_stride1 = np.lib.stride_tricks.sliding_window_view(A_prev_pad, axis=(1, 2), window_shape=(f, f))
         windows = windows_stride1[:, ::s, ::s]
 
-        A = np.tensordot(windows, self.W, axes=([3, 4, 5], [2, 0, 1])) + self.b
+        Z = np.tensordot(windows, self.W, axes=([3, 4, 5], [2, 0, 1])) + self.b
 
         self.cache['A_prev'] = A_prev
         self.cache['p'] = p
         self.cache['s'] = s
 
-        return A
+        return Z
     
     def backward(self, dZ): 
         """
@@ -649,9 +762,8 @@ class Conv2d:
         n_H_prev = A_prev.shape[1]
         n_C_prev = A_prev.shape[-1]
         n_H = dZ.shape[1]
-        n_C = dZ.shape[-1]
         m = dZ.shape[0]
-        p = self.p
+        p = self.cache['p']
         s = self.s
         f = self.W.shape[0]
         A_prev_pad = np.pad(A_prev, ((0, 0), (p, p), (p, p), (0, 0))) 
@@ -681,6 +793,27 @@ class Conv2d:
         self.grads['dA'] = dA
 
         return dA
+    
+    def build(self, input_shape, rng):
+        """Create the filters and biases from the input shape and return the output shape.
+
+        Args:
+            input_shape (tuple): shape of one example (n_H_prev, n_W_prev, n_C_prev), without the batch axis.
+            rng (np.random.Generator): generator used to initialize the filters.
+
+        Returns:
+            tuple: output shape (n_H, n_W, n_C) with integer sizes.
+        """
+        n_H_prev, n_W_prev, n_C_prev = input_shape
+        self.W = rng.standard_normal((self.f, self.f, n_C_prev, self.n_C))
+        self.b = np.zeros(self.n_C)
+        p = self.p
+        if p == 'same':
+            p = (n_H_prev * (self.s - 1) + self.f - self.s) // 2
+        n_H = (n_H_prev + 2 * p - self.f) // self.s + 1
+        n_W = (n_W_prev + 2 * p - self.f) // self.s + 1
+        return (int(n_H), int(n_W), self.n_C)
+
         
 
         
