@@ -13,7 +13,7 @@ def check_norm(X):
     Returns:
         tuple: (mean, std), both scalars.
     """
-    return X.mean(), X.std()
+    print(f'mean: {round(X.mean(), 5)}, std: {round(X.std(), 5)}')
 
 
 def plot_distribution(Y_train, Y_dev, Y_test, ax):

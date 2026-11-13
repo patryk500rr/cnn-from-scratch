@@ -61,3 +61,4 @@ class Sequential:
                 pairs.append((layer.W, layer.grads['dW']))  # (n_in, n_out), (n_in, n_out)
                 pairs.append((layer.b, layer.grads['db']))  # (n_out,), (n_out,)
         return pairs
+

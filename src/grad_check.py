@@ -53,7 +53,7 @@ def grad_check(model, loss, X, Y, eps, n_samples, rng):
 
     for i, (param, grad_analytic) in enumerate(params):
         grad_num = np.zeros_like(param)
-
+        
         k = rng.choice(param.size, size=min(n_samples, param.size), replace=False)
         idx = np.unravel_index(k, param.shape)
 
@@ -79,8 +79,10 @@ def grad_check(model, loss, X, Y, eps, n_samples, rng):
 
         if param.ndim == 2:
             param_type = 'W'
-        else:
+        elif param.ndim == 1:
             param_type = 'b'
+        elif param.ndim == 4:
+            param_type = 'W conv'
         err_dict[f'{param_type}, layer: {i}, shape: {param.shape}'] = err
 
     return err_dict

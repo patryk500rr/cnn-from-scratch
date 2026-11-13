@@ -36,7 +36,7 @@ def compute_miu_std(X):
     return miu, std
 
 
-def load_data(path_train, path_test, dev_size=5000, seed=123):
+def load_data(path_train, path_test, dev_size=5000, seed=123, dtype='float32'):
     """Load Fashion-MNIST from two CSV files, split, normalize and one-hot encode.
 
     The training CSV is shuffled and its last dev_size examples become the dev set.
@@ -83,7 +83,7 @@ def load_data(path_train, path_test, dev_size=5000, seed=123):
     Y_dev = np.eye(n, dtype='float32')[Y_dev_s]  # (dev_size, 10) one-hot
     Y_test = np.eye(n, dtype='float32')[labels_test]  # (10000, 10) one-hot
 
-    return X_train, X_dev, X_test, Y_train, Y_dev, Y_test
+    return X_train.astype(dtype), X_dev.astype(dtype), X_test.astype(dtype), Y_train.astype(dtype), Y_dev.astype(dtype), Y_test.astype(dtype)
 
 
 def get_minibatch(X, Y, size, rng=None):
