@@ -11,27 +11,29 @@ Lista zmian do wprowadzenia albo sprawdzenia przy budowie pierwszej wersji model
 - **`SoftmaxCrossEntropy.backward` bez argumentów.** `Y` jest w cache, więc wywołanie to `loss.backward()`.
 - **`grad_check` z argumentem `rng`.** Generator nie jest już zmienną globalną.
 - **`tests.py` przemianowany na `utils.py`.** Zawiera funkcje pomocnicze: `check_norm`, `plot_distribution`, `check_minibatch_len`.
-- **Docstringi.** Uzupełnione i zaktualizowane we wszystkich plikach, łącznie z `build` i klasą `Conv2d`.
+- **Docstringi.** Uzupełnione i zaktualizowane we wszystkich plikach, łącznie z `build`, `summary`, `predict`, `fit` i klasą `Conv2d`.
 - **`accuracy` liczy dokładność.** Używa `np.mean(Y_hat == Y)`, a `evaluate` porównuje indeksy klas (`Y.argmax(axis=1)`).
-- **`step_SGD` robi jeden krok.** Przyjmuje `(parameters, lr)` i aktualizuje wagi w miejscu. Zastąpił zepsuty `SGD`.
-- **Podział na krok i pętlę.** `step_SGD` aktualizuje wagi, a pętla po batchach i epokach jest w `train.fit`, który zwraca wyniki każdej epoki przez `yield`.
+- **`SGD` robi jeden krok.** Przyjmuje `(parameters, lr)` i aktualizuje wagi w miejscu. Zastąpił zepsuty `SGD` z pętlą po epokach. Nazwa funkcji w `optimizers.py` to teraz `SGD`.
+- **`fit` jest metodą `Sequential`.** Pętla po epokach i batchach, ewaluacja na train i dev oraz wybór zwracanych wyników (`return_`) są w `model.py`. Plik `train.py` został usunięty.
 - **`evaluate` bez `backward`.** Liczy koszt i dokładność na zbiorze, bez zmiany wag.
 - **`Data` jako zbiór funkcji.** `load_data`, `get_minibatch`, `shuffle` i `compute_miu_std` są funkcjami modułowymi, a `seed` i `dtype` są argumentami.
 - **Wcięcie w `data.py`.** Ciała funkcji są wcięte standardowo.
 - **`main.ipynb` i API danych.** Wywołanie `load_data` w notebooku zgadza się z obecnym API.
 - **`build` we wszystkich warstwach.** Każda warstwa z wagami tworzy je na podstawie `input_shape` i zwraca kształt wyjścia. Bezparametrowe zwracają kształt, `Flatten` ma `build`.
+- **`Sequential.build`, `summary` i `predict`.** `build` tworzy wagi warstwa po warstwie, `summary` zwraca liczbę parametrów i kształty, `predict` zwraca przewidywane klasy.
 - **`Conv2d` z `build` i `'same'`.** Konstruktor przyjmuje `(n_C, f, s, p)`, a `backward` używa `self.cache['p']`, więc padding `'same'` działa.
+- **Pooling wektorowo.** `MaxPool2d` i `AvgPool2d` liczą forward przez `sliding_window_view`, a backward przez pętlę po `f × f` przesunięciach zamiast po pozycjach. `GlobalAvgPool` jest wektorowy w forward i backward. Sprawdzone względem wersji naiwnych i gradientem numerycznym (błędy rzędu `10⁻¹⁰`).
 
 ## Do zrobienia
 
+- **`main.py` usunięty.** W historii są `run_MLP` i `run_conv_naive`, a na dysku ich nie ma. Zdecydować, czy przywrócić je (np. w `main.py` albo w notebooku), czy przenieść do notebooka.
+- **`Sequential.summary()` buduje wagi ponownie.** `summary` wywołuje `build`, który losuje nowe wagi i przesuwa stan `rng`. Po treningu nadpisze wytrenowany model. Zmienić tak, żeby `summary` tylko liczył kształty i parametry bez losowania.
 - **`layers.Flatten.backward`.** Klucz `'dA_flat'` w `grads` przechowuje już odspłaszczony gradient. Zmienić nazwę albo nie zapisywać go tam wcale.
 - **Testy w `tests/`.** `check_minibatch_len` i podobne sprawdzenia przenieść do osobnego folderu testów (np. `pytest`).
-- **Pooling wektorowo.** `MaxPool2d` i `AvgPool2d` liczą okna w pętli po przykładach, pozycjach i kanałach, czyli około 200 tys. wywołań `np.max` na batch 64 dla mapy 28×28×16. Wersja wektorowa: dla `s = f` zmiana kształtu na `(m, H/f, f, W/f, f, C)` i `max` albo `mean` po osiach `f`; dla nakładających się okien `sliding_window_view`. Backward wektorowo przez maskę argmax z tych samych okien. Naiwne wersje (`*_naive`) zostają jako wzorzec do porównań. Zrobić po zmierzeniu, że pooling (a nie konwolucja) jest wąskim gardłem.
-- **Konwolucja `Conv2d.backward` nadal w pętlach.** Forward jest już wektorowy, a `dX` wciąż liczy się przez pętlę po pozycjach. Do zrobienia po pierwszym działającym modelu, przy sprawdzaniu czasu.
-- **`Sequential.parameters()`: zmiana formatu zwracanych wartości.** Obecnie zwraca płaską listę par `(parametr, gradient)` w kolejności warstw, a warstwy rozpoznaje po atrybucie `W`. Problemy: pary nie niosą nazwy, więc `grad_check` musi zgadywać etykietę po liczbie wymiarów; optymalizator z pamięcią (momentum, Adam) nie ma stabilnego klucza do swojego stanu; a gradienty trzeba mieć z poprzedniego `backward`. Propozycja: każda warstwa zwraca swoje parametry i gradienty jako słownik, a `Sequential` składa z tego słownik z nazwami w stylu `'layer2.W'`. Dotyczy: `model.py` (`parameters`, `hasattr`), `optimizers.step_SGD` (pętla po parach), `train.fit` (wywołanie optymalizatora), `grad_check` (pętla po parach, etykiety z `ndim` i indeksu), a także docstringi tych miejsc.
-- **`fit` wewnątrz klasy `Sequential`.** Pętla treningowa (batche, epoki, ewaluacja na dev) ma być metodą `Sequential.fit`, a nie osobną funkcją w `train.py`. Wtedy `fit` ma dostęp do warstw i `parameters()`. Dotyczy: `model.py` (nowa metoda), `train.py` (usunąć albo zostawić jako cienki wrapper), `main.py` (wywołanie), notebooki (wywołanie). Ustalić przy zmianie formatu `parameters()`, bo `fit` go używa.
+- **Konwolucja `Conv2d.backward` nadal w pętlach.** Forward jest już wektorowy, a `dX` wciąż liczy się przez pętlę po pozycjach wyjścia. Zrobić tym samym sposobem co pooling (pętla po `f × f` przesunięciach), po pomiarze czasu.
+- **`Sequential.parameters()`: zmiana formatu zwracanych wartości.** Obecnie zwraca płaską listę par `(parametr, gradient)` w kolejności warstw, a warstwy rozpoznaje po atrybucie `W`. Problemy: pary nie niosą nazwy, więc `grad_check` musi zgadywać etykietę po liczbie wymiarów; optymalizator z pamięcią (momentum, Adam) nie ma stabilnego klucza do swojego stanu; a gradienty trzeba mieć z poprzedniego `backward`. Propozycja: każda warstwa zwraca swoje parametry i gradienty jako słownik, a `Sequential` składa z tego słownik z nazwami w stylu `'layer2.W'`. Dotyczy: `model.py` (`parameters`, `hasattr`, `fit`), `optimizers.SGD` (pętla po parach), `grad_check` (pętla po parach, etykiety z `ndim` i indeksu), a także docstringi tych miejsc.
 
 ## Do decyzji
 
 - **Flaga `training` w `Sequential` i warstwach.** Potrzebna przy dropout i batch norm (kroki 13 i 14). Na razie nie jest potrzebna.
-- **Gdzie trzymać `J` z epoki.** `fit` może zwracać historię jako słownik albo `yield` na każdą epokę. Obecnie `yield` na każdą epokę jest wybrany.
+- **Gdzie trzymać `J` z epoki.** `fit` zwraca historię jako słowniki wybrane przez `return_` po zakończeniu treningu. Ewentualnie `yield` po każdej epoce, jeśli chcesz podgląd w trakcie.

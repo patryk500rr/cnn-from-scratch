@@ -1,7 +1,7 @@
 """Parameter update rules."""
 
 
-def step_SGD(parameters, lr):
+def SGD(parameters, lr):
     """Apply one gradient descent update in place: param -= lr * grad.
 
     Call this after model.backward(), so that the gradients are up to date.
