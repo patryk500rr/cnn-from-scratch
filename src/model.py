@@ -4,6 +4,7 @@ import numpy as np
 from data import get_minibatch
 from evaluation import accuracy
 import time
+import copy
 
 class Sequential:
     """Ordered container of layers. Runs them forward and backward in sequence.
@@ -61,11 +62,11 @@ class Sequential:
             list of tuples: [(W, dW), (b, db), ...] in layer order.
                             Layers without parameters (ReLU, Tanh, Flatten, ...) contribute nothing.
         """
-        pairs = []
-        for layer in self.layers:
+        pairs = {}
+        for i, layer in enumerate(self.layers):
             if hasattr(layer, 'W'):
-                pairs.append((layer.W, layer.grads['dW']))  # (n_in, n_out), (n_in, n_out)
-                pairs.append((layer.b, layer.grads['db']))  # (n_out,), (n_out,)
+                pairs[f'layer{i} W, dW'] = (layer.W, layer.grads['dW'])  # (n_in, n_out), (n_in, n_out)
+                pairs[f'layer{i} b, db'] = ((layer.b, layer.grads['db']))  # (n_out,), (n_out,)
         return pairs
 
     
@@ -91,8 +92,8 @@ class Sequential:
     def summary(self):
         """Return the parameter count and the shapes of every layer.
 
-        Warning: this calls build() again, which draws new random weights from self.rng.
-        Call it before training. Calling it after training overwrites the trained weights.
+        Works on deep copies of the layers and of self.rng, so the weights of this model
+        and the random state used by fit() are not changed.
 
         Returns:
             tuple: (params_dict, shapes_dict).
@@ -104,12 +105,14 @@ class Sequential:
         shapes_dict = {}
         layers_count = {}
         input_shape = self.input_shape
+        rng_copy = copy.deepcopy(self.rng)
 
         for layer in self.layers:
-            if 'rng' in inspect.signature(layer.build).parameters:
-                output_shape, n_params = layer.build(input_shape, self.rng, return_nparams=True)
+            layer_copy = copy.deepcopy(layer)
+            if 'rng' in inspect.signature(layer_copy.build).parameters:
+                output_shape, n_params = layer_copy.build(input_shape, rng_copy, return_nparams=True)
             else:
-                output_shape, n_params = layer.build(input_shape, return_nparams=True)
+                output_shape, n_params = layer_copy.build(input_shape, return_nparams=True)
 
             layer_name = layer.name()
             
@@ -126,6 +129,7 @@ class Sequential:
 
         params_dict['Total Parameters'] = int(np.sum(list(params_dict.values())))
 
+        print(f'Parameters: \n{params_dict}\nShapes: \n{shapes_dict}')
         return params_dict, shapes_dict
     
     def fit(self, loss, X_train, Y_train, X_dev, Y_dev, 
@@ -303,3 +307,49 @@ class Sequential:
         """
         Z = self.forward(X)
         return np.argmax(Z, axis=1)
+    
+    def save(self, name):
+        """Save the weights of all layers that have W and b to a .npz file.
+
+        The file name gets the '.npz' extension added. Each layer is stored under the keys
+        'W<i>' and 'b<i>', where i is the position of the layer in self.layers. Only the
+        weights are saved, not the architecture, the cache or the gradients.
+
+        Args:
+            name (str): file name without the extension, e.g. 'model' creates 'model.npz'.
+
+        Returns:
+            None.
+        """
+        name = name + '.npz'
+        dict_ = {}
+        for i, layer in enumerate(self.layers):
+            if hasattr(layer, 'W'):
+                dict_[f'W{i}'] = layer.W
+                dict_[f'b{i}'] = layer.b
+        np.savez(name, **dict_)
+
+    def load_weights(self, file_name):
+        """Load the weights from a .npz file written by save() into the layers of this model.
+
+        IMPORTANT: build() must be called first. The layers only have W and b after build(),
+        and the shapes of the loaded arrays are checked against them. Build the model with
+        the same architecture and input_shape that was used when the file was saved.
+
+        Args:
+            file_name (str): path to the .npz file, including the extension.
+
+        Raises:
+            AssertionError: if the shape of a stored array does not match the layer.
+            KeyError: if the file does not contain a key for a layer with weights.
+
+        Returns:
+            None.
+        """
+        with np.load(file_name) as data:
+            for i, layer in enumerate(self.layers):
+                if hasattr(layer, 'W'):
+                    assert (layer.W).shape ==  (data['W' + str(i)]).shape
+                    layer.W = data['W' + str(i)]
+                    assert (layer.b).shape ==  (data['b' + str(i)]).shape
+                    layer.b = data['b' + str(i)]
