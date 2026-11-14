@@ -83,6 +83,11 @@ class Dense:
             return (self.n_out, )
         
     def name(self):
+        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+
+        Returns:
+            str: class name of the layer.
+        """
         return 'Dense'
     
 class ReLU:
@@ -137,6 +142,11 @@ class ReLU:
             return input_shape
         
     def name(self):
+        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+
+        Returns:
+            str: class name of the layer.
+        """
         return 'ReLU'
 
 class SoftmaxCrossEntropy:
@@ -243,6 +253,11 @@ class Tanh:
             return input_shape
 
     def name(self):
+        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+
+        Returns:
+            str: class name of the layer.
+        """
         return 'Tanh'
         
 class Flatten:
@@ -279,7 +294,7 @@ class Flatten:
             np.ndarray: gradient reshaped to the input shape, e.g. (m, H, W, C).
         """
         dA = A_flat.reshape(self.cache['A_shape'])
-        self.grads['dA_flat'] = dA
+        self.grads['dA'] = dA
         return dA
 
     def build(self, input_shape, return_nparams=False):
@@ -297,6 +312,11 @@ class Flatten:
             return (int(np.prod(input_shape)),)
         
     def name(self):
+        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+
+        Returns:
+            str: class name of the layer.
+        """
         return 'Flatten'
     
 class Sigmoid:
@@ -351,6 +371,11 @@ class Sigmoid:
             return input_shape
         
     def name(self):
+        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+
+        Returns:
+            str: class name of the layer.
+        """
         return 'Sigmoid'
 
 class conv_naive:
@@ -470,7 +495,7 @@ class conv_naive:
         self.grads['dA'] = dA
         return dA    
 
-class MaxPool2d:
+class MaxPool2d_naive:
     """Max pooling: each f x f window (moved with stride s) is replaced by its maximum.
 
     Shapes:
@@ -521,13 +546,14 @@ class MaxPool2d:
     def backward(self, dA):
         """Send each output gradient back to the position of the window maximum.
 
-        Work in progress: the body is not written yet.
+        Naive version with explicit loops over examples, positions and channels.
+        It is the reference for checking the vectorized MaxPool2d.
 
         Args:
-            dA (np.ndarray): gradient w.r.t. A, shape (m, n_H, n_H, n_C).
+            dA (np.ndarray): gradient w.r.t. A, shape (m, n_H, n_W, n_C).
 
         Returns:
-            np.ndarray: dA_prev, shape (m, n_H_prev, n_H_prev, n_C).
+            np.ndarray: dA_prev, shape (m, n_H_prev, n_W_prev, n_C).
         """
         A_prev = self.cache['A_prev']
         dA_prev = np.zeros_like(A_prev).astype('float64')
@@ -565,9 +591,114 @@ class MaxPool2d:
             return (int(n_H), int(n_W), int(n_C))
         
     def name(self):
+        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+
+        Returns:
+            str: class name of the layer.
+        """
+        return 'MaxPool2d_naive'
+
+class MaxPool2d:
+    """Max pooling: each f x f window (moved with stride s) is replaced by its maximum.
+
+    Shapes:
+        A_prev: (m, n_H_prev, n_H_prev, n_C)
+        A:      (m, n_H, n_H, n_C), with n_H = floor((n_H_prev - f) / s) + 1
+
+    Has no parameters. Each channel is pooled separately.
+    """
+
+    def __init__(self, f=2, s=2):
+        """Store the window size and stride.
+
+        Args:
+            f (int): side length of the pooling window.
+            s (int): stride, the step between neighbouring windows.
+        """
+        self.f = f
+        self.s = s
+        self.cache = {}
+        self.grads = {}
+
+    def forward(self, A_prev):
+        """Take the maximum of each window and save A_prev for the backward pass.
+
+        Args:
+            A_prev (np.ndarray): input, shape (m, n_H_prev, n_H_prev, n_C).
+
+        Returns:
+            np.ndarray: A, shape (m, n_H, n_H, n_C).
+        """
+        s = self.s
+        f = self.f
+        windows_stride1 = np.lib.stride_tricks.sliding_window_view(A_prev, window_shape=(f, f), axis=(1, 2))
+        windows = windows_stride1[:, ::s, ::s]
+        A = np.max(windows, axis=(-2, -1))
+        self.cache['A_prev'] = A_prev
+
+        return A
+    
+    def backward(self, dA):
+        """Send each output gradient back to the position of the window maximum.
+
+        Only the maximum of each window receives a gradient. The position is found with
+        argmax on the flattened window. Overlapping windows add their contributions with +=.
+
+        Args:
+            dA (np.ndarray): gradient w.r.t. A, shape (m, n_H, n_W, n_C).
+
+        Returns:
+            np.ndarray: dA_prev, shape (m, n_H_prev, n_W_prev, n_C).
+        """
+        s = self.s
+        f = self.f
+        m = dA.shape[0]
+        H_out = dA.shape[1]
+        n_C_out = dA.shape[-1]
+        A_prev = self.cache['A_prev']
+        windows_stride1 = np.lib.stride_tricks.sliding_window_view(A_prev, window_shape=(f, f), axis=(1, 2))
+        windows = windows_stride1[:, ::s, ::s].reshape(m, H_out, H_out, n_C_out, f*f)
+
+        idx_flat = np.argmax(windows, axis=-1)
+
+        mask = np.eye(f*f)[idx_flat]
+        contribution = mask.reshape(m, H_out, H_out, n_C_out, f, f) * dA[..., None, None]
+        
+        dA_prev = np.zeros_like(A_prev).astype('float64')
+
+        for a in range(f):
+            for b in range(f):
+                dA_prev[:, a: a + s * H_out : s, b : b + s * H_out : s, :] += contribution[:, :, :, :, a, b]
+
+        self.grads['dA_prev'] = dA_prev
+        return dA_prev
+    
+    def build(self, input_shape, return_nparams=False):
+        """Return the output shape of the pooling. No parameters are created.
+
+        Args:
+            input_shape (tuple): shape of one example (n_H_prev, n_W_prev, n_C), without the batch axis.
+
+        Returns:
+            tuple: output shape (n_H, n_W, n_C) with integer sizes.
+        """
+        n_H_prev, n_W_prev, n_C = input_shape
+        n_H = (n_H_prev - self.f) // self.s + 1
+        n_W = (n_W_prev - self.f) // self.s + 1
+        if return_nparams:
+            return (int(n_H), int(n_W), int(n_C)), 0
+        else:
+            return (int(n_H), int(n_W), int(n_C))
+        
+    def name(self):
+        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+
+        Returns:
+            str: class name of the layer.
+        """
         return 'MaxPool2d'
 
-class AvgPool2d:
+class AvgPool2d_naive:
     """Average pooling: each f x f window (moved with stride s) is replaced by its mean.
 
     Shapes:
@@ -661,6 +792,106 @@ class AvgPool2d:
             return (int(n_H), int(n_W), int(n_C))
         
     def name(self):
+        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+
+        Returns:
+            str: class name of the layer.
+        """
+        return 'AvgPool2d_naive'
+    
+class AvgPool2d:
+    """Max pooling: each f x f window (moved with stride s) is replaced by its maximum.
+
+    Shapes:
+        A_prev: (m, n_H_prev, n_H_prev, n_C)
+        A:      (m, n_H, n_H, n_C), with n_H = floor((n_H_prev - f) / s) + 1
+
+    Has no parameters. Each channel is pooled separately.
+    """
+
+    def __init__(self, f=2, s=2):
+        """Store the window size and stride.
+
+        Args:
+            f (int): side length of the pooling window.
+            s (int): stride, the step between neighbouring windows.
+        """
+        self.f = f
+        self.s = s
+        self.cache = {}
+        self.grads = {}
+
+    def forward(self, A_prev):
+        """Take the mean of each window and save A_prev for the backward pass.
+
+        Args:
+            A_prev (np.ndarray): input, shape (m, n_H_prev, n_W_prev, n_C).
+
+        Returns:
+            np.ndarray: A, shape (m, n_H, n_W, n_C), the mean of each f x f window.
+        """
+        s = self.s
+        f = self.f
+        windows_stride1 = np.lib.stride_tricks.sliding_window_view(A_prev, window_shape=(f, f), axis=(1, 2))
+        windows = windows_stride1[:, ::s, ::s]
+        A = np.average(windows, axis=(-2, -1))
+        self.cache['A_prev'] = A_prev
+
+        return A
+    
+    def backward(self, dA):
+        """Spread each output gradient evenly over the f * f inputs of its window.
+
+        Every input in a window contributes 1 / (f * f) of the output, so dA is divided by
+        f * f and added to all positions of the window. Overlapping windows add with +=.
+
+        Args:
+            dA (np.ndarray): gradient w.r.t. A, shape (m, n_H, n_W, n_C).
+
+        Returns:
+            np.ndarray: dA_prev, shape (m, n_H_prev, n_W_prev, n_C).
+        """
+        s = self.s
+        f = self.f
+        m = dA.shape[0]
+        H_out = dA.shape[1]
+        n_C_out = dA.shape[-1]
+        A_prev = self.cache['A_prev']
+
+        contribution = np.broadcast_to((dA[..., None, None] / f**2), (m, H_out, H_out, n_C_out, f, f))
+        
+        dA_prev = np.zeros_like(A_prev).astype('float64')
+
+        for a in range(f):
+            for b in range(f):
+                dA_prev[:, a: a + s * H_out : s, b : b + s * H_out : s, :] += contribution[:, :, :, :, a, b]
+
+        self.grads['dA_prev'] = dA_prev
+        return dA_prev
+    
+    def build(self, input_shape, return_nparams=False):
+        """Return the output shape of the pooling. No parameters are created.
+
+        Args:
+            input_shape (tuple): shape of one example (n_H_prev, n_W_prev, n_C), without the batch axis.
+
+        Returns:
+            tuple: output shape (n_H, n_W, n_C) with integer sizes.
+        """
+        n_H_prev, n_W_prev, n_C = input_shape
+        n_H = (n_H_prev - self.f) // self.s + 1
+        n_W = (n_W_prev - self.f) // self.s + 1
+        if return_nparams:
+            return (int(n_H), int(n_W), int(n_C)), 0
+        else:
+            return (int(n_H), int(n_W), int(n_C))
+        
+    def name(self):
+        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+
+        Returns:
+            str: class name of the layer.
+        """
         return 'AvgPool2d'
     
 class GlobalAvgPool:
@@ -688,13 +919,7 @@ class GlobalAvgPool:
         Returns:
             np.ndarray: A, shape (m, n_C).
         """
-        m = A_prev.shape[0]
-        n_C = A_prev.shape[-1]
-        A = np.zeros((m, n_C))
-        
-        for i in range(m):
-            for c in range(n_C):
-                A[i, c] = np.average(A_prev[i, :, :, c])
+        A = np.average(A_prev, axis=(1, 2))
 
         self.cache['A_prev'] = A_prev
         return A 
@@ -714,14 +939,8 @@ class GlobalAvgPool:
         A_prev = self.cache['A_prev']
         H = A_prev.shape[1]
         W = A_prev.shape[2]
-        m = A_prev.shape[0]
-        n_C = A_prev.shape[-1]
-
-        dA_prev = np.zeros_like(A_prev).astype('float64')
-
-        for i in range(m):
-            for c in range(n_C):
-                dA_prev[i, :, :, c] = dA[i, c] / (H * W)
+        
+        dA_prev = np.broadcast_to(dA[:, None, None, :] / (H*W), A_prev.shape)
 
         self.grads['dA_prev'] = dA_prev
         return dA_prev
@@ -741,6 +960,11 @@ class GlobalAvgPool:
             return (input_shape[-1],)
         
     def name(self):
+        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+
+        Returns:
+            str: class name of the layer.
+        """
         return 'GlobalAvgPool'
 
 class Conv2d:
@@ -869,6 +1093,11 @@ class Conv2d:
             return (int(n_H), int(n_W), self.n_C)
         
     def name(self):
+        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+
+        Returns:
+            str: class name of the layer.
+        """
         return 'Conv2d'
 
         
