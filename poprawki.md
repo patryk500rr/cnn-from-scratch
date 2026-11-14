@@ -1,5 +1,16 @@
 # Poprawki w projekcie CNN od zera w numpy
 
+## Na teraz: naprawa `Conv2d.backward` (pętla po pozycjach w `dX`)
+
+Cel: skrócić czas treningu CNN. Profilowanie pokazało, że około 85% czasu zjada liczenie `dX` przez pętlę po pozycjach wyjścia.
+
+- [ ] Zmierzyć czas `forward` i `backward` dla każdej warstwy (`perf_counter`) i zapisać wynik jako punkt odniesienia.
+- [ ] Przepisać `dX` tak, jak `MaxPool2d.backward`: pętla po przesunięciach `f × f`, a w każdym przesunięciu operacja na całym batchu (bez pętli po pozycjach).
+- [ ] Obsłużyć padding `'same'` (`self.cache['p']`) i zachować `float64`.
+- [ ] Sprawdzić wynik względem `conv_naive` (forward i backward) i gradientem numerycznym (`grad_check`). Błąd względny ma być rzędu `10⁻⁷` lub mniejszy.
+- [ ] Zmierzyć czas po zmianie i porównać z punktem odniesienia.
+- [ ] Wpisać wynik do `experiments.md` razem z łączną liczbą parametrów i czasem treningu.
+
 Lista zmian do wprowadzenia albo sprawdzenia przy budowie pierwszej wersji modelu (krok 4 planu). Każdy punkt ma status: **zrobione**, **do zrobienia** albo **do decyzji**.
 
 ## Zrobione

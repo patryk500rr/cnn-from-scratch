@@ -62,11 +62,11 @@ class Sequential:
             list of tuples: [(W, dW), (b, db), ...] in layer order.
                             Layers without parameters (ReLU, Tanh, Flatten, ...) contribute nothing.
         """
-        pairs = {}
-        for i, layer in enumerate(self.layers):
+        pairs = []
+        for layer in self.layers:
             if hasattr(layer, 'W'):
-                pairs[f'layer{i} W, dW'] = (layer.W, layer.grads['dW'])  # (n_in, n_out), (n_in, n_out)
-                pairs[f'layer{i} b, db'] = ((layer.b, layer.grads['db']))  # (n_out,), (n_out,)
+                pairs.append((layer.W, layer.grads['dW']))  # (n_in, n_out), (n_in, n_out)
+                pairs.append((layer.b, layer.grads['db']))  # (n_out,), (n_out,)
         return pairs
 
     
@@ -129,7 +129,6 @@ class Sequential:
 
         params_dict['Total Parameters'] = int(np.sum(list(params_dict.values())))
 
-        print(f'Parameters: \n{params_dict}\nShapes: \n{shapes_dict}')
         return params_dict, shapes_dict
     
     def fit(self, loss, X_train, Y_train, X_dev, Y_dev, 
