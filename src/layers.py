@@ -20,8 +20,7 @@ class Dense:
         """Store the parameters and create empty cache and gradient dicts.
 
         Args:
-            W (np.ndarray): weights, shape (n_in, n_out).
-            b (np.ndarray): biases, shape (n_out,).
+            n_out (int): number of outputs (neurons). W and b are created later, in build().
         """
         self.cache = {}  # values saved in forward, needed by backward
         self.grads = {}  # parameter gradients, filled in backward
@@ -83,7 +82,7 @@ class Dense:
             return (self.n_out, )
         
     def name(self):
-        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+        """Return the layer name, used as the key in the model summary.
 
         Returns:
             str: class name of the layer.
@@ -123,7 +122,7 @@ class ReLU:
         Returns:
             np.ndarray: dZ, same shape as Z.
         """
-        dZ = dA * (self.cache['Z'] > 0).astype('float32')  # mask has the same shape as Z
+        dZ = dA * (self.cache['Z'] > 0)  # boolean mask, same shape as Z
         self.grads['dZ'] = dZ
         return dZ
     
@@ -142,7 +141,7 @@ class ReLU:
             return input_shape
         
     def name(self):
-        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+        """Return the layer name, used as the key in the model summary.
 
         Returns:
             str: class name of the layer.
@@ -253,7 +252,7 @@ class Tanh:
             return input_shape
 
     def name(self):
-        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+        """Return the layer name, used as the key in the model summary.
 
         Returns:
             str: class name of the layer.
@@ -312,7 +311,7 @@ class Flatten:
             return (int(np.prod(input_shape)),)
         
     def name(self):
-        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+        """Return the layer name, used as the key in the model summary.
 
         Returns:
             str: class name of the layer.
@@ -371,7 +370,7 @@ class Sigmoid:
             return input_shape
         
     def name(self):
-        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+        """Return the layer name, used as the key in the model summary.
 
         Returns:
             str: class name of the layer.
@@ -444,7 +443,7 @@ class conv_naive:
         for i in range(m):
             for row in range(n_H):
                 for col in range(n_H):
-                    A_prev_slice = A_prev_pad[i, row * s:(row * s + f), col * s:(col * s + f)] # (1, f, f, n_C_prev)
+                    A_prev_slice = A_prev_pad[i, row * s:(row * s + f), col * s:(col * s + f)] # (f, f, n_C_prev)
                     for c in range(self.W.shape[-1]):
                         Z_slice = np.sum(A_prev_slice * self.W[:, :, :, c]) + self.b[c]
                         Z[i, row, col, c] = Z_slice
@@ -564,10 +563,10 @@ class MaxPool2d_naive:
             for row in range(dA.shape[1]):
                 for col in range(dA.shape[2]):
                     for c in range(dA.shape[3]):
-                        slice = A_prev[i, s*row:s*row + f, s*col:s*col + f, c].copy()
-                        mask = np.zeros_like(slice)
-                        idx_slice = np.unravel_index(np.argmax(slice), slice.shape)
-                        mask[idx_slice] = dA[i, row, col, c]
+                        window = A_prev[i, s*row:s*row + f, s*col:s*col + f, c].copy()
+                        mask = np.zeros_like(window)
+                        idx_window = np.unravel_index(np.argmax(window), window.shape)
+                        mask[idx_window] = dA[i, row, col, c]
                         dA_prev[i, s*row:s*row + f, s*col:s*col + f, c] += mask
 
         self.grads['dA_prev'] = dA_prev
@@ -591,7 +590,7 @@ class MaxPool2d_naive:
             return (int(n_H), int(n_W), int(n_C))
         
     def name(self):
-        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+        """Return the layer name, used as the key in the model summary.
 
         Returns:
             str: class name of the layer.
@@ -691,7 +690,7 @@ class MaxPool2d:
             return (int(n_H), int(n_W), int(n_C))
         
     def name(self):
-        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+        """Return the layer name, used as the key in the model summary.
 
         Returns:
             str: class name of the layer.
@@ -792,7 +791,7 @@ class AvgPool2d_naive:
             return (int(n_H), int(n_W), int(n_C))
         
     def name(self):
-        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+        """Return the layer name, used as the key in the model summary.
 
         Returns:
             str: class name of the layer.
@@ -800,7 +799,7 @@ class AvgPool2d_naive:
         return 'AvgPool2d_naive'
     
 class AvgPool2d:
-    """Max pooling: each f x f window (moved with stride s) is replaced by its maximum.
+    """Average pooling: each f x f window (moved with stride s) is replaced by its mean.
 
     Shapes:
         A_prev: (m, n_H_prev, n_H_prev, n_C)
@@ -887,7 +886,7 @@ class AvgPool2d:
             return (int(n_H), int(n_W), int(n_C))
         
     def name(self):
-        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+        """Return the layer name, used as the key in the model summary.
 
         Returns:
             str: class name of the layer.
@@ -960,7 +959,7 @@ class GlobalAvgPool:
             return (input_shape[-1],)
         
     def name(self):
-        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+        """Return the layer name, used as the key in the model summary.
 
         Returns:
             str: class name of the layer.
@@ -969,6 +968,8 @@ class GlobalAvgPool:
 
 class Conv2d:
     """Convolution layer. The filters and biases are created in build(), not in __init__.
+
+    Assumes square inputs (n_H = n_W), as the vectorized backward uses n_H for both axes.
 
     Shapes:
         A_prev: (m, n_H_prev, n_W_prev, n_C_prev)   input of this layer
@@ -999,7 +1000,7 @@ class Conv2d:
             A_prev (np.ndarray): input, shape (m, n_H_prev, n_W_prev, n_C_prev).
 
         Returns:
-            np.ndarray: output (called A in the code), shape (m, n_H, n_W, n_C), before any activation.
+            np.ndarray: Z, the output before any activation, shape (m, n_H, n_W, n_C).
         """
         s = self.s
         p = self.p
@@ -1108,7 +1109,7 @@ class Conv2d:
             return (int(n_H), int(n_W), self.n_C)
         
     def name(self):
-        """Return the layer name, e.g. 'Conv2d', used as the key in the model summary.
+        """Return the layer name, used as the key in the model summary.
 
         Returns:
             str: class name of the layer.

@@ -48,11 +48,12 @@ def load_data(path_train, path_test, dev_size=5000, seed=123, dtype='float32'):
         path_test (pathlib.Path or str): test CSV in the same format.
         dev_size (int): number of training examples held out as the dev set.
         seed (int): seed for the random generator used to shuffle the training data.
+        dtype (str): dtype of the returned arrays, e.g. 'float32' or 'float64'.
 
     Returns:
         tuple: six arrays (X_train, X_dev, X_test, Y_train, Y_dev, Y_test), where
-            X_* have shape (m, 28, 28, 1) and dtype float32,
-            Y_* are one-hot with shape (m, 10) and dtype float32.
+            X_* have shape (m, 28, 28, 1) and the given dtype,
+            Y_* are one-hot with shape (m, 10) and the given dtype.
     """
     rng = np.random.default_rng(seed)
 
@@ -93,8 +94,8 @@ def get_minibatch(X, Y, size, rng=None):
         X (np.ndarray): inputs, shape (m, ...).
         Y (np.ndarray): labels, shape (m, ...).
         size (int): batch size.
-        rng (np.random.Generator or None): if given, the examples are shuffled once when
-            the generator is created, so each epoch gets a new order. Pass the same
+        rng (np.random.Generator or None): if given, the examples are shuffled once, when the
+            first batch is requested with next(), so each epoch gets a new order. Pass the same
             generator object every epoch, not a seed, otherwise each epoch gets the same order.
             If None, the data is not shuffled (use this for dev and test).
 

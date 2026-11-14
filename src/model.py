@@ -2,9 +2,9 @@
 import inspect
 import numpy as np
 from data import get_minibatch
-from evaluation import accuracy
 import time
 import copy
+
 
 class Sequential:
     """Ordered container of layers. Runs them forward and backward in sequence.
@@ -21,7 +21,11 @@ class Sequential:
         """Store the layers in order, from input to output.
 
         Args:
-            layers (list): layer objects. Each must implement forward(x) and backward(dx).
+            layers (list): layer objects. Each must implement forward(x), backward(dx),
+                build(input_shape, ...) and name().
+            input_shape (tuple): shape of one example without the batch axis, e.g. (28, 28, 1).
+            rng (np.random.Generator): generator used to initialize the weights in build()
+                and to shuffle the training data in fit().
         """
         self.layers = layers
         self.input_shape = input_shape
@@ -69,7 +73,6 @@ class Sequential:
                 pairs.append((layer.b, layer.grads['db']))  # (n_out,), (n_out,)
         return pairs
 
-    
     def build(self):
         """Create the weights of every layer, one layer after another.
 
@@ -115,12 +118,12 @@ class Sequential:
                 output_shape, n_params = layer_copy.build(input_shape, return_nparams=True)
 
             layer_name = layer.name()
-            
+
             if layer_name not in layers_count.keys():
                 layers_count[layer_name] = 1
             else:
                 layers_count[layer_name] += 1
-            
+
             layer_name = layer_name + ' ' + str(layers_count[layer_name])
             params_dict[layer_name] = n_params
             shapes_dict[layer_name] = [input_shape, output_shape]
@@ -130,16 +133,17 @@ class Sequential:
         params_dict['Total Parameters'] = int(np.sum(list(params_dict.values())))
 
         return params_dict, shapes_dict
-    
-    def fit(self, loss, X_train, Y_train, X_dev, Y_dev, 
-            optimizer, max_epochs, batch_size, lr, 
+
+    def fit(self, loss, X_train, Y_train, X_dev, Y_dev,
+            optimizer, max_epochs, batch_size, lr,
             return_=[], print_epochs=1, print_time=False):
         """Train the model with mini-batch gradient descent and evaluate after every epoch.
 
         For each epoch, the training set is shuffled with self.rng. For every mini-batch the
         method runs forward, the loss, backward and one optimizer step. After the epoch, the
-        whole training set and the whole dev set are evaluated with evaluate(). Results are
-        collected in dictionaries keyed by the epoch index (0, 1, ...).
+        training set is evaluated in mini-batches of batch_size (exact mean over all examples)
+        and the dev set is evaluated in one pass. Results are collected in dictionaries keyed
+        by the epoch index (0, 1, ...).
 
         Args:
             loss (SoftmaxCrossEntropy): loss layer.
@@ -152,8 +156,9 @@ class Sequential:
             batch_size (int): mini-batch size.
             lr (float): learning rate passed to the optimizer.
             return_ (list of str): what to return. Allowed items: 'J_history',
-                'accuracy_history', 'time', 'all'. Required; passing None raises TypeError.
-            print_epochs (int): print the statistics every print_epochs epochs.
+                'accuracy_history', 'time', 'all'. Default [] returns an empty list.
+                Passing None raises TypeError.
+            print_epochs (int): print the statistics every print_epochs epochs and after the last epoch.
             print_time (bool): if True, also print the epoch time and the average time per mini-batch.
 
         Returns:
@@ -163,13 +168,12 @@ class Sequential:
                 'time'             -> time_dict
                 'all'              -> [(J_dict_train, J_dict_dev), (acc_dict_train, acc_dict_dev), time_dict]
             Each dict maps epoch index -> value:
-                J_dict_train[i]: mean loss on the whole training set after epoch i
-                J_dict_dev[i]:   loss on the whole dev set after epoch i
+                J_dict_train[i]: mean loss over the whole training set after epoch i
+                J_dict_dev[i]:   mean loss over the whole dev set after epoch i
                 acc_dict_train[i], acc_dict_dev[i]: accuracy on the same sets after epoch i
                 time_dict: key 'Epoch i, Epoch time [m], Average time per minibatch [s]',
                     value [epoch time in whole minutes, average minibatch time in seconds]
-            The function returns only after the last epoch, not during training. The loss is
-            not averaged over the mini-batches of the epoch, it is recomputed on the whole set.
+            The function returns only after the last epoch, not during training.
         """
         t0 = time.perf_counter()
 
@@ -177,12 +181,11 @@ class Sequential:
             for item in return_:
                 assert item in ['J_history', 'accuracy_history', 'time', 'all']
 
-        
         J_dict_train = {}
         J_dict_dev = {}
         acc_train_dict = {}
         acc_dev_dict = {}
-        time_dict={}
+        time_dict = {}
         for i in range(max_epochs):
             t0_epoch = time.perf_counter()
             batch_loader_train = get_minibatch(X_train, Y_train, batch_size, self.rng)
@@ -191,7 +194,8 @@ class Sequential:
             while True:
                 try:
                     X_mb_train, Y_mb_train = next(batch_loader_train)
-                except StopIteration: break
+                except StopIteration:
+                    break
                 t0_minibatch = time.perf_counter()
 
                 Z = self.forward(X_mb_train)
@@ -201,25 +205,25 @@ class Sequential:
                 self.backward(dZ)
 
                 optimizer(self.parameters(), lr)
-                
+
                 t_minibatch += time.perf_counter() - t0_minibatch
                 n_batches += 1
 
-            J_list_train, acc_list_train = self.evaluate(loss, X_train, Y_train, batch_size)
+            J_train, acc_train = self.evaluate(loss, X_train, Y_train, batch_size)
             J_dev, acc_dev = self.evaluate(loss, X_dev, Y_dev)
 
-            J_dict_train[i] = np.mean(J_list_train)
-            acc_train_dict[i] = np.mean(acc_list_train)
-
+            J_dict_train[i] = J_train
+            acc_train_dict[i] = acc_train
             J_dict_dev[i] = J_dev
             acc_dev_dict[i] = acc_dev
-            avg_time_minibatch = round(t_minibatch/n_batches, 4)
+
+            avg_time_minibatch = round(t_minibatch / n_batches, 4)
             t_epoch = round((time.perf_counter() - t0_epoch) / 60, 3)
 
             time_dict[f'Epoch {i}, Epoch time [m], Average time per minibatch [s]'] = [t_epoch, avg_time_minibatch]
 
-            if (i % print_epochs) == 0 or (i - 1 == max_epochs):
-                print(f'Epoch: {i}, loss: {round(np.mean(J_list_train), 6)}, accuracy train: {round(np.mean(acc_list_train), 3)}, accuracy dev: {round(acc_dev, 3)}')
+            if (i % print_epochs) == 0 or i == max_epochs - 1:
+                print(f'Epoch: {i}, loss: {round(J_train, 6)}, accuracy train: {round(acc_train, 3)}, accuracy dev: {round(acc_dev, 3)}')
             if print_time:
                 print(f'Time per epoch: {t_epoch} min \nAverage time per minibatch: {avg_time_minibatch} s\n')
 
@@ -234,18 +238,16 @@ class Sequential:
             if item == 'all':
                 to_return.append([(J_dict_train, J_dict_dev), (acc_train_dict, acc_dev_dict), time_dict])
 
-        print(f'Total time elapsed:  {round((time.perf_counter() - t0) / 60)} min')
+        print(f'Total time elapsed:  {round((time.perf_counter() - t0) / 60, 1)} min')
 
         return to_return
-    
-    def evaluate(self, loss, X, Y, batch_size=None):
-        """Compute loss and accuracy on a dataset without updating the model.
 
-        Runs forward only: no backward and no parameter changes. The current code has
-        two branches that return different types, see the Returns section.
+    def evaluate(self, loss, X, Y, batch_size=None):
+        """Compute the mean loss and the accuracy on a dataset without updating the model.
+
+        Runs forward only: no backward and no parameter changes.
 
         Args:
-            model (Sequential): network with a forward method.
             loss (SoftmaxCrossEntropy): loss layer, used as loss.forward(Z, Y).
             X (np.ndarray): inputs, shape (m, 28, 28, 1).
             Y (np.ndarray): one-hot labels, shape (m, 10).
@@ -253,44 +255,32 @@ class Sequential:
                 If None, the whole dataset goes through one forward pass.
 
         Returns:
-            if batch_size is given: tuple (J_list, acc_list), one loss and one accuracy per batch.
-            if batch_size is None: tuple (J, acc), a single loss and a single accuracy.
-                The intended result is the mean over all examples, not per batch.
+            tuple: (J, acc), two floats. J is the mean loss over all m examples and acc is the
+                fraction of correct predictions over all m examples. Both are exact, also when
+                batch_size does not divide m (the smaller last batch is weighted by its size).
 
         Note:
-            Because the forward pass overwrites the layers' cache, do not call evaluate between
+            The forward pass overwrites the layers' cache, so do not call evaluate between
             the forward and backward pass of a training batch.
         """
-        if batch_size is not None:
-            batch_loader = get_minibatch(X, Y, batch_size)
-            J_list = []
-            acc_list = []
-            while True:
-                try:
-                    X_minibatch, Y_minibatch = next(batch_loader)
-                except StopIteration:
-                    break
+        m = len(X)
 
-                Z = self.forward(X_minibatch)
-                J = loss.forward(Z, Y_minibatch)
-                J_list.append(J)
-
-                Y_hat = np.argmax(Z, axis=1)
-
-                acc = accuracy(Y_hat, Y_minibatch.argmax(axis=1))
-                acc_list.append(acc)
-
-            return J_list, acc_list
-        
-        else:
+        if batch_size is None:
             Z = self.forward(X)
             J = loss.forward(Z, Y)
-
-            Y_hat = np.argmax(Z, axis=1)
-            acc = accuracy(Y_hat, Y.argmax(axis=1))
-
+            acc = np.mean(np.argmax(Z, axis=1) == Y.argmax(axis=1))
             return J, acc
-        
+
+        J_sum = 0.0
+        n_correct = 0
+        for X_mb, Y_mb in get_minibatch(X, Y, batch_size):
+            Z = self.forward(X_mb)
+            J_mb = loss.forward(Z, Y_mb)  # mean loss over this batch
+            J_sum += J_mb * len(X_mb)  # back to a sum over the batch examples
+            n_correct += np.sum(np.argmax(Z, axis=1) == Y_mb.argmax(axis=1))
+
+        return J_sum / m, n_correct / m
+
     def predict(self, X):
         """Return the predicted class index for every example.
 
@@ -306,7 +296,7 @@ class Sequential:
         """
         Z = self.forward(X)
         return np.argmax(Z, axis=1)
-    
+
     def save(self, name):
         """Save the weights of all layers that have W and b to a .npz file.
 
@@ -348,7 +338,7 @@ class Sequential:
         with np.load(file_name) as data:
             for i, layer in enumerate(self.layers):
                 if hasattr(layer, 'W'):
-                    assert (layer.W).shape ==  (data['W' + str(i)]).shape
+                    assert (layer.W).shape == (data['W' + str(i)]).shape
                     layer.W = data['W' + str(i)]
-                    assert (layer.b).shape ==  (data['b' + str(i)]).shape
+                    assert (layer.b).shape == (data['b' + str(i)]).shape
                     layer.b = data['b' + str(i)]

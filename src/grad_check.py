@@ -38,8 +38,9 @@ def grad_check(model, loss, X, Y, eps, n_samples, rng):
         rng (np.random.Generator): generator used to choose which entries to check.
 
     Returns:
-        dict: maps a description such as 'W, layer: 0, shape: (5, 6)' to the
-              relative error. Expected values are below 1e-7.
+        dict: maps a description such as '0: W (dense), shape: (5, 6)' to the relative error.
+              The number is the position in model.parameters(), so it counts every (param, grad)
+              pair, weights and biases separately. Expected values are below 1e-7.
               Values near 1e-5 are suspicious, above 1e-3 usually mean a bug.
     """
 
@@ -78,12 +79,14 @@ def grad_check(model, loss, X, Y, eps, n_samples, rng):
             err = np.linalg.norm(grad - grad_num[idx]) / denominator
 
         if param.ndim == 2:
-            param_type = 'W'
+            param_type = 'W (dense)'
         elif param.ndim == 1:
             param_type = 'b'
         elif param.ndim == 4:
-            param_type = 'W conv'
-        err_dict[f'{param_type}, layer: {i}, shape: {param.shape}'] = err
+            param_type = 'W (conv)'
+        else:
+            param_type = 'param'
+        err_dict[f'{i}: {param_type}, shape: {param.shape}'] = err
 
     return err_dict
         

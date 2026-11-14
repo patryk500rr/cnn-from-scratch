@@ -75,7 +75,9 @@ Każdy wpis opisuje jedną konfigurację i wynik. Dev służy do wyboru modelu, 
 - Przyspieszenie względem wersji sprzed naprawy (1.15 min): około 5.6×.
 
 **Wyniki**
-- Dokładność train i dev: do uzupełnienia z historii `fit`.
+- Dokładność train: ok. 86%.
+- Dokładność dev: ok. 85%.
+- Luka train–dev: ok. 1 pp, bez wyraźnego przeuczenia.
 
 **Uwagi**
 - Nowy `backward` przeszedł porównanie z `conv_naive` (błąd około `1e-15`) i gradient check (błąd względny około `1e-10`).

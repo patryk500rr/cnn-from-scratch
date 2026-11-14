@@ -10,11 +10,9 @@ def SGD(parameters, lr):
         parameters (list): (param, grad) pairs, as returned by model.parameters().
             The arrays are updated in place, so the layers see the new values.
         lr (float): learning rate.
+
+    Returns:
+        None.
     """
     for param, d_param in parameters:
         param -= lr * d_param
-            
-        
-        
-        
-

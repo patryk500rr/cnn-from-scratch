@@ -3,15 +3,15 @@ import numpy as np
 
 
 def check_norm(X):
-    """Return the mean and standard deviation of an array of inputs.
+    """Print the mean and standard deviation of an array of inputs.
 
     After normalization on the training set, they should be close to 0 and 1.
 
     Args:
-        X (np.ndarray): training inputs, e.g. X_train from Data.load_data.
+        X (np.ndarray): training inputs, e.g. X_train from load_data.
 
     Returns:
-        tuple: (mean, std), both scalars.
+        None. The values are printed, rounded to 5 decimal places.
     """
     print(f'mean: {round(X.mean(), 5)}, std: {round(X.std(), 5)}')
 
