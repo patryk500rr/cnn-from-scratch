@@ -1025,12 +1025,26 @@ class Conv2d:
     
     def backward(self, dZ): 
         """
-            W (f, f, n_C_prev, n_C)
-            b (n_C, )
-            A_prev (m, n_H_prev, n_H_prev, n_C_prev)
-            Z (m, n_H, n_H, n_C)
-            dZ (m, n_H, n_H, n_C)
-            windows (m, n_H, n_H, n_C_prev, f, f)
+        Compute the gradients of the filters, the biases and the input.
+
+        Args:
+            dZ (np.ndarray): gradient of the loss w.r.t. this layer's output Z,
+                shape (m, n_H, n_W, n_C).
+
+        Returns:
+            np.ndarray: dA, gradient w.r.t. the input A_prev, shape (m, n_H_prev, n_H_prev, n_C_prev).
+                The padding is removed before returning.
+
+        Shapes of the arrays used inside:
+            W           (f, f, n_C_prev, n_C)
+            b           (n_C,)
+            A_prev      (m, n_H_prev, n_H_prev, n_C_prev)
+            A_prev_pad  (m, n_H_prev + 2p, n_H_prev + 2p, n_C_prev)
+            windows     (m, n_H, n_W, n_C_prev, f, f)
+            dW          (f, f, n_C_prev, n_C)
+            db          (n_C,)
+            dA_contrib  (f, f, n_C_prev, m, n_H, n_W)
+            dA_pad      (m, n_H_prev + 2p, n_H_prev + 2p, n_C_prev)
         """
         A_prev = self.cache['A_prev'] 
         n_H_prev = A_prev.shape[1]
@@ -1049,13 +1063,14 @@ class Conv2d:
         dW = np.tensordot(windows, dZ, ([0, 1, 2], [0, 1, 2])).transpose(1, 2, 0, 3)
         db = np.sum(dZ, axis=(0, 1, 2))
 
-        dA_pad_windows = np.tensordot(self.W, dZ, ([3], [3])) # (f, f, n_C, m, n_H_prev, n_H_prev)
-        dA_pad = np.zeros((m, n_H_prev + 2*p, n_H_prev + 2*p, n_C_prev))
-        for i in range(m):
-            for row in range(n_H):
-                for col in range(n_H):
-                    contribution = dA_pad_windows[:, :, :, i, row, col]
-                    dA_pad[i, s*row:s*row + f, s*col:s*col + f, :] += contribution
+        dA_contrib = np.tensordot(self.W, dZ, ([3], [3]))  # (f, f, n_C_prev, m, n_H, n_W)
+        
+        dA_pad = np.zeros(A_prev_pad.shape) # (m, n_H_prev + 2p, n_H_prev + 2p, n_C_prev)
+
+        for a in range(f):
+            for b in range(f):
+                dA_pad[ :, a: a + s * n_H : s, b : b + s * n_H : s, :] += dA_contrib[a, b, :, :].transpose(1, 2, 3, 0)
+
 
         self.grads['dW'] = dW
         self.grads['db'] = db
@@ -1099,6 +1114,8 @@ class Conv2d:
             str: class name of the layer.
         """
         return 'Conv2d'
+    
+
 
         
 
