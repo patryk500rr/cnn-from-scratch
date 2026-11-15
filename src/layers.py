@@ -7,27 +7,30 @@ import numpy as np
 
 
 class Dense:
-    """Fully connected layer: Z = A @ W + b.
+    """Fully connected layer: Z = A @ W + b, or Z = A @ W when bias=False.
 
     Shapes:
         W: (n_in, n_out)
-        b: (n_out,)
+        b: (n_out,), only if bias=True
         A: (m, n_in)   input batch, saved in cache for backward
         Z: (m, n_out)  output
     """
 
-    def __init__(self, n_out):
+    def __init__(self, n_out, bias=True):
         """Store the parameters and create empty cache and gradient dicts.
 
         Args:
             n_out (int): number of outputs (neurons). W and b are created later, in build().
+            bias (bool): if True (default), the layer has a bias b. Set it to False when the
+                layer is followed by batch normalization, which removes the bias anyway.
         """
         self.cache = {}  # values saved in forward, needed by backward
         self.grads = {}  # parameter gradients, filled in backward
         self.n_out = n_out
+        self.bias = bias
 
     def forward(self, A):
-        """Compute Z = A @ W + b and save A for the backward pass.
+        """Compute Z = A @ W (+ b if bias=True) and save A for the backward pass.
 
         Args:
             A (np.ndarray): input batch, shape (m, n_in).
@@ -35,7 +38,9 @@ class Dense:
         Returns:
             np.ndarray: Z, shape (m, n_out).
         """
-        Z = np.dot(A, self.W) + self.b  # (m, n_in) @ (n_in, n_out) + (n_out,) -> (m, n_out)
+        Z = np.dot(A, self.W)  # (m, n_in) @ (n_in, n_out) -> (m, n_out)
+        if self.bias:
+            Z = Z + self.b  # (m, n_out) + (n_out,) -> (m, n_out)
         self.cache['A'] = A  # (m, n_in), used later for dW = A.T @ dZ
         return Z
 
@@ -49,20 +54,21 @@ class Dense:
             np.ndarray: dA, shape (m, n_in), passed to the previous layer.
         """
         dW = np.dot(self.cache['A'].T, dZ)  # (n_in, m) @ (m, n_out) -> (n_in, n_out)
-        db = np.sum(dZ, axis=0)  # sum over the m examples: (m, n_out) -> (n_out,)
         dA = np.dot(dZ, self.W.T)  # (m, n_out) @ (n_out, n_in) -> (m, n_in)
 
         assert dW.shape == self.W.shape
-        assert db.shape == self.b.shape
         assert dA.shape == self.cache['A'].shape
 
         self.grads['dW'] = dW
-        self.grads['db'] = db
+        if self.bias:
+            db = np.sum(dZ, axis=0)  # sum over the m examples: (m, n_out) -> (n_out,)
+            assert db.shape == self.b.shape
+            self.grads['db'] = db
 
         return dA
     
     def build(self, input_shape, rng, return_nparams=False):
-        """Create W and b from the input size and the number of outputs.
+        """Create W (and b if bias=True) from the input size and the number of outputs.
 
         Args:
             input_shape (tuple): shape of one example, e.g. (n_in,), without the batch axis.
@@ -73,10 +79,11 @@ class Dense:
         """
         n_in = input_shape[0]
         self.W = rng.standard_normal((n_in, self.n_out)) * 0.1
-        self.b = np.zeros(self.n_out)
+        if self.bias:
+            self.b = np.zeros(self.n_out)
 
         if return_nparams:
-            n_params = n_in * self.n_out + self.n_out
+            n_params = n_in * self.n_out + (self.n_out if self.bias else 0)
             return (self.n_out, ), n_params
         else:
             return (self.n_out, )
@@ -974,10 +981,10 @@ class Conv2d:
     Shapes:
         A_prev: (m, n_H_prev, n_W_prev, n_C_prev)   input of this layer
         W:      (f, f, n_C_prev, n_C)                created in build()
-        b:      (n_C,)                               created in build()
+        b:      (n_C,)                               created in build(), only if bias=True
         output: (m, n_H, n_W, n_C)                   before any activation
     """
-    def __init__(self, n_C, f, s, p):
+    def __init__(self, n_C, f, s, p, bias=True):
         """Store the hyperparameters. The weights are created later, in build().
 
         Args:
@@ -985,11 +992,14 @@ class Conv2d:
             f (int): side length of the square filter.
             s (int): stride.
             p (int or 'same'): padding, or 'same' to keep the size when stride is 1.
+            bias (bool): if True (default), each filter has a bias b. Set it to False when the
+                layer is followed by batch normalization, which removes the bias anyway.
         """
         self.s = s
         self.p = p
         self.f = f
         self.n_C = n_C
+        self.bias = bias
         self.cache = {}
         self.grads = {}
 
@@ -1016,7 +1026,9 @@ class Conv2d:
         windows_stride1 = np.lib.stride_tricks.sliding_window_view(A_prev_pad, axis=(1, 2), window_shape=(f, f))
         windows = windows_stride1[:, ::s, ::s]
 
-        Z = np.tensordot(windows, self.W, axes=([3, 4, 5], [2, 0, 1])) + self.b
+        Z = np.tensordot(windows, self.W, axes=([3, 4, 5], [2, 0, 1]))
+        if self.bias:
+            Z = Z + self.b
 
         self.cache['A_prev'] = A_prev
         self.cache['p'] = p
@@ -1062,8 +1074,6 @@ class Conv2d:
         windows = windows_stride1[:, ::s, ::s]
 
         dW = np.tensordot(windows, dZ, ([0, 1, 2], [0, 1, 2])).transpose(1, 2, 0, 3)
-        db = np.sum(dZ, axis=(0, 1, 2))
-
         dA_contrib = np.tensordot(self.W, dZ, ([3], [3]))  # (f, f, n_C_prev, m, n_H, n_W)
         
         dA_pad = np.zeros(A_prev_pad.shape) # (m, n_H_prev + 2p, n_H_prev + 2p, n_C_prev)
@@ -1074,7 +1084,8 @@ class Conv2d:
 
 
         self.grads['dW'] = dW
-        self.grads['db'] = db
+        if self.bias:
+            self.grads['db'] = np.sum(dZ, axis=(0, 1, 2))
 
         if p != 0:
             dA = dA_pad[:, p:-p, p:-p]
@@ -1085,7 +1096,7 @@ class Conv2d:
         return dA
     
     def build(self, input_shape, rng, return_nparams=False):
-        """Create the filters and biases from the input shape and return the output shape.
+        """Create the filters (and biases, if bias=True) from the input shape and return the output shape.
 
         Args:
             input_shape (tuple): shape of one example (n_H_prev, n_W_prev, n_C_prev), without the batch axis.
@@ -1096,14 +1107,15 @@ class Conv2d:
         """
         n_H_prev, n_W_prev, n_C_prev = input_shape
         self.W = rng.standard_normal((self.f, self.f, n_C_prev, self.n_C))
-        self.b = np.zeros(self.n_C)
+        if self.bias:
+            self.b = np.zeros(self.n_C)
         p = self.p
         if p == 'same':
             p = (n_H_prev * (self.s - 1) + self.f - self.s) // 2
         n_H = (n_H_prev + 2 * p - self.f) // self.s + 1
         n_W = (n_W_prev + 2 * p - self.f) // self.s + 1
         if return_nparams:
-            nparams = self.f * self.f * n_C_prev * self.n_C + self.n_C
+            nparams = self.f * self.f * n_C_prev * self.n_C + (self.n_C if self.bias else 0)
             return (int(n_H), int(n_W), self.n_C), nparams
         else:
             return (int(n_H), int(n_W), self.n_C)
@@ -1119,6 +1131,155 @@ class Conv2d:
 
 
         
+class BatchNorm2d:
+    """Batch normalization: normalizes each neuron or channel over the mini-batch, then rescales it.
+
+    Training (training=True): the mean and variance are computed from the current mini-batch,
+    the input is normalized with them, and the running averages miu_run and std2_run are updated.
+    Test (training=False): the running averages are used instead, and nothing is updated.
+
+    Output: Z_out = gamma * Z_norm + beta, where Z_norm = (Z - miu) / sqrt(std2 + 1e-8).
+    gamma and beta are learned. Both have one value per neuron (Dense) or per channel (conv).
+
+    Shapes:
+        Dense: Z (m, n), axes=0, gamma and beta (n,), miu_run and std2_run (n,).
+        Conv:  Z (m, H, W, C), axes=(0, 1, 2), gamma and beta (C,), miu_run and std2_run (C,).
+
+    The layer must be built with build() before forward() is called.
+    """
+
+    def __init__(self, axes, momentum=0.1):
+        """Store the axes over which statistics are computed and the update rate of the running averages.
+
+        Args:
+            axes (int or tuple of int): axes that are averaged over. 0 for Dense inputs (m, n),
+                (0, 1, 2) for conv inputs (m, H, W, C). An int is converted to a 1-element tuple.
+            momentum (float): weight of the new mini-batch statistics in the running averages,
+                miu_run = (1 - momentum) * miu_run + momentum * miu. Default 0.1, which corresponds
+                to beta = 0.9 in the exponentially weighted average.
+        """
+        if type(axes) == int:
+            self.axes = (axes, )
+        else:
+            self.axes = tuple(axes)
+        self.cache = {}
+        self.grads = {}
+        self.momentum = momentum
+
+
+    def forward(self, Z, training:bool):
+        """Normalize Z and rescale it with gamma and beta.
+
+        In training mode, statistics come from the current mini-batch and are saved in the cache
+        for backward(). The running averages are then updated. In test mode, the running averages
+        are used and the layer's state does not change.
+
+        Args:
+            Z (np.ndarray): input, shape (m, n) for Dense or (m, H, W, C) for conv.
+            training (bool): True during training, False at test time.
+
+        Returns:
+            np.ndarray: Z_out with the same shape as Z.
+        """
+        self.cache['Z'] = Z
+        if training == True:
+            if len(self.axes) == 1:
+                self.N = Z.shape[0]
+            else:
+                self.N = Z.shape[0] * Z.shape[1] * Z.shape[2] 
+            miu = np.mean(Z, axis=self.axes)
+            std2 =  np.sum((Z - miu)**2, axis=self.axes) / self.N
+            Z_norm = (Z - miu) / np.sqrt(std2 + 1e-8)
+            self.cache['miu'] = miu
+            self.cache['std2'] = std2
+            self.cache['Z_norm'] = Z_norm
+            self.miu_run = (1 - self.momentum) * self.miu_run + self.momentum * miu
+            self.std2_run = (1 - self.momentum) * self.std2_run + self.momentum * std2
+
+            Z_out = self.gamma * Z_norm + self.beta
+
+            return Z_out
+        
+        if training == False:
+            Z_norm = (Z - self.miu_run) / np.sqrt(self.std2_run + 1e-8)
+            self.cache['Z_norm'] = Z_norm
+            Z_out = self.gamma * Z_norm + self.beta
+
+            return Z_out
+        
+    def backward(self, dZ_out):
+        """Compute gradients for gamma, beta and the input. Valid only after forward(training=True).
+
+        Gradients of gamma and beta are stored in self.grads['dgamma'] and self.grads['dbeta'].
+        The gradient of the mean and variance with respect to the batch is included, because
+        both depend on every example in the mini-batch.
+
+        Args:
+            dZ_out (np.ndarray): gradient of the loss w.r.t. Z_out, same shape as Z.
+
+        Returns:
+            np.ndarray: dZ, gradient w.r.t. the input Z, same shape as Z.
+        """
+        Z = self.cache['Z']
+        miu = self.cache['miu']
+        std2 = self.cache['std2']
+        Z_norm = self.cache['Z_norm']
+
+        dgamma = np.sum(dZ_out * Z_norm, axis=self.axes)
+        dbeta = np.sum(dZ_out, axis=self.axes)
+        dZ_norm = dZ_out * self.gamma
+        dstd2 = np.sum(dZ_norm * (Z - miu), axis=self.axes) * (-1/2) * (std2 + 1e-8)**(-3/2)
+        dmiu = -np.sum(dZ_norm / np.sqrt(std2 + 1e-8), axis=self.axes) + dstd2 * (-2/self.N) * np.sum(Z - miu, axis=self.axes)
+        dZ = dZ_norm / np.sqrt(std2 + 1e-8) + dstd2 * 2 * (Z - miu) / self.N + dmiu / self.N
+
+        self.grads['dgamma'] = dgamma
+        self.grads['dbeta'] = dbeta
+        self.grads['dZ_norm'] = dZ_norm
+        self.grads['dstd2'] = dstd2
+        self.grads['dmiu'] = dmiu
+
+        return dZ
+        
+    def build(self, input_shape, rng, return_nparams=False):
+        """Create gamma, beta and the running averages, and return the output shape.
+
+        gamma starts at 1, beta at 0 (the identity transform), miu_run at 0 and std2_run at 1.
+        The layer has no random weights, so rng is not used. The output shape equals the input shape.
+
+        Args:
+            input_shape (tuple): shape of one example without the batch axis, e.g. (n,) for Dense
+                or (H, W, C) for conv.
+            rng (np.random.Generator): not used, accepted for compatibility with Sequential.build.
+            return_nparams (bool): if True, also return the number of parameters, 2 * n_C.
+
+        Returns:
+            tuple: output shape (same as input_shape), and optionally the number of parameters.
+        """
+        if len(input_shape) == 1:
+            n_C = input_shape[0]
+            self.gamma = np.ones(input_shape, dtype='float64')
+            self.beta = np.zeros(input_shape, dtype='float64')
+
+            self.miu_run = np.zeros(n_C, dtype='float64')
+            self.std2_run = np.ones(n_C, dtype='float64')
+        else:
+            n_C = input_shape[-1]
+            self.gamma = np.ones(n_C, dtype='float64')
+            self.beta = np.zeros(n_C, dtype='float64')
+
+            self.miu_run = np.zeros(n_C, dtype='float64')
+            self.std2_run = np.ones(n_C, dtype='float64')
+
+        if return_nparams:
+            return input_shape, 2*n_C
+        else:
+            return input_shape
 
         
-        
+    def name(self):
+        """Return the layer name, used as the key in the model summary.
+
+        Returns:
+            str: 'BatchNorm2d'.
+        """
+        return 'BatchNorm2d'

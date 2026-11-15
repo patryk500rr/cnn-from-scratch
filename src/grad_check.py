@@ -6,7 +6,10 @@ import numpy as np
 
 
 def compute_loss(model, loss, X, Y):
-    """Run a forward pass and return the scalar loss, without any backward pass.
+    """Run a forward pass in training mode and return the scalar loss, without any backward pass.
+
+    Training mode is used so that batch norm normalizes with batch statistics, as in fit(),
+    which is what backward() differentiates. Running statistics are not used here.
 
     Args:
         model (Sequential): network to evaluate.
@@ -17,7 +20,7 @@ def compute_loss(model, loss, X, Y):
     Returns:
         float: mean cross-entropy loss J.
     """
-    Z = model.forward(X)
+    Z = model.forward(X, training=True)  # training mode: batch norm uses batch statistics, as in fit()
     J = loss.forward(Z, Y)
     return J
 

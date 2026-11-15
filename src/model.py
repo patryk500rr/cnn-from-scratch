@@ -31,17 +31,26 @@ class Sequential:
         self.input_shape = input_shape
         self.rng = rng
 
-    def forward(self, X):
+    def forward(self, X, training=False):
         """Pass X through all layers in order.
+
+        The flag training is passed only to layers whose forward accepts it (BatchNorm2d).
+        Other layers are called as layer.forward(X).
 
         Args:
             X (np.ndarray): input batch, shape (m, ...).
+            training (bool): True during training (batch statistics in batch norm, saved in cache
+                for backward), False at test time (running statistics). Default False, so
+                predict() and evaluate() work in test mode without extra arguments.
 
         Returns:
             np.ndarray: output of the last layer, e.g. logits Z of shape (m, n_classes).
         """
         for layer in self.layers:
-            X = layer.forward(X)  # output of one layer is the input of the next
+            if 'training' in inspect.signature(layer.forward).parameters:
+                X = layer.forward(X, training=training)
+            else:
+                X = layer.forward(X)  # output of one layer is the input of the next
         return X
 
     def backward(self, dout):
@@ -63,14 +72,20 @@ class Sequential:
         Call after backward(), because the gradients are filled in there.
 
         Returns:
-            list of tuples: [(W, dW), (b, db), ...] in layer order.
-                            Layers without parameters (ReLU, Tanh, Flatten, ...) contribute nothing.
+            list of tuples: in layer order, for each layer with weights (Dense, Conv2d) a pair
+                (W, dW), followed by (b, db) if the layer has a bias. For each BatchNorm2d layer
+                the pairs (gamma, dgamma) and (beta, dbeta). Layers without parameters (ReLU,
+                Tanh, Flatten, ...) contribute nothing.
         """
         pairs = []
         for layer in self.layers:
             if hasattr(layer, 'W'):
                 pairs.append((layer.W, layer.grads['dW']))  # (n_in, n_out), (n_in, n_out)
-                pairs.append((layer.b, layer.grads['db']))  # (n_out,), (n_out,)
+                if hasattr(layer, 'b'):  # layers built with bias=False have no b
+                    pairs.append((layer.b, layer.grads['db']))  # (n_out,), (n_out,)
+            if hasattr(layer, 'gamma') and hasattr(layer, 'beta'):  # BatchNorm2d
+                pairs.append((layer.gamma, layer.grads['dgamma']))  # (n_l,) or (C,)
+                pairs.append((layer.beta, layer.grads['dbeta']))  # (n_l,) or (C,)
         return pairs
 
     def build(self):
@@ -210,7 +225,7 @@ class Sequential:
                     break
                 t0_minibatch = time.perf_counter()
 
-                Z = self.forward(X_mb_train)
+                Z = self.forward(X_mb_train, training=True)
                 loss.forward(Z, Y_mb_train)
 
                 dZ = loss.backward()
@@ -311,11 +326,13 @@ class Sequential:
         return np.argmax(Z, axis=1)
 
     def save(self, name):
-        """Save the weights of all layers that have W and b to a .npz file.
+        """Save the weights of all layers to a .npz file.
 
-        The file name gets the '.npz' extension added. Each layer is stored under the keys
-        'W<i>' and 'b<i>', where i is the position of the layer in self.layers. Only the
-        weights are saved, not the architecture, the cache or the gradients.
+        The file name gets the '.npz' extension added. Layers are stored under the keys
+        'W<i>' and 'b<i>' (Dense, Conv2d; b only if the layer has a bias), and batch norm
+        layers under 'gamma<i>', 'beta<i>', 'miu_run<i>' and 'std2_run<i>', where i is the
+        position of the layer in self.layers. The running statistics are needed for test time.
+        The architecture, the cache and the gradients are not saved.
 
         Args:
             name (str): file name without the extension, e.g. 'model' creates 'model.npz'.
@@ -328,15 +345,23 @@ class Sequential:
         for i, layer in enumerate(self.layers):
             if hasattr(layer, 'W'):
                 dict_[f'W{i}'] = layer.W
-                dict_[f'b{i}'] = layer.b
+                if hasattr(layer, 'b'):
+                    dict_[f'b{i}'] = layer.b
+            if hasattr(layer, 'gamma') and hasattr(layer, 'beta'):
+                dict_[f'gamma{i}'] = layer.gamma
+                dict_[f'beta{i}'] = layer.beta
+                dict_[f'miu_run{i}'] = layer.miu_run
+                dict_[f'std2_run{i}'] = layer.std2_run
         np.savez(name, **dict_)
 
     def load_weights(self, file_name):
         """Load the weights from a .npz file written by save() into the layers of this model.
 
-        IMPORTANT: build() must be called first. The layers only have W and b after build(),
+        IMPORTANT: build() must be called first. The layers only have their arrays after build(),
         and the shapes of the loaded arrays are checked against them. Build the model with
-        the same architecture and input_shape that was used when the file was saved.
+        the same architecture, input_shape and bias settings that were used when the file was saved.
+        Batch norm layers also get their gamma, beta and running statistics (miu_run, std2_run),
+        which are needed for test-time predictions.
 
         Args:
             file_name (str): path to the .npz file, including the extension.
@@ -353,5 +378,13 @@ class Sequential:
                 if hasattr(layer, 'W'):
                     assert (layer.W).shape == (data['W' + str(i)]).shape
                     layer.W = data['W' + str(i)]
-                    assert (layer.b).shape == (data['b' + str(i)]).shape
-                    layer.b = data['b' + str(i)]
+                    if hasattr(layer, 'b'):
+                        assert (layer.b).shape == (data['b' + str(i)]).shape
+                        layer.b = data['b' + str(i)]
+                if hasattr(layer, 'gamma') and hasattr(layer, 'beta'):
+                    assert (layer.gamma).shape == (data['gamma' + str(i)]).shape
+                    layer.gamma = data['gamma' + str(i)]
+                    assert (layer.beta).shape == (data['beta' + str(i)]).shape
+                    layer.beta = data['beta' + str(i)]
+                    layer.miu_run = data['miu_run' + str(i)]
+                    layer.std2_run = data['std2_run' + str(i)]
