@@ -825,3 +825,77 @@ a_out = g(F(a_in) + W_s * a_in)
 | 12 | Liczba parametrów conv, 1×1 | 5, 9, 17 |
 | 13 | Architektura, bias/variance, podział danych | 1, 4, 14, 17 |
 | 14 | Skip connections | 16 |
+
+---
+
+## Zadania pogłębiające
+
+Do każdego kroku dwa zadania. Nie są obowiązkowe, ale każde zmusza do sprawdzenia czegoś w kodzie, a nie tylko w teorii. Wyniki zapisuj w `experiments.md` albo w notatce, z liczbami.
+
+**Krok 1. Dane**
+- Policz średnią i odchylenie na zbiorze train i na całym zbiorze (z dev i test). Porównaj wartości i opisz, dlaczego ten wyciek jest problemem, nawet gdy różnica jest mała.
+- Zmień normalizację na osobną średnią i odchylenie dla każdego piksela. Porównaj kształty i liczbę statystyk, a potem wytłumacz, co zyskujesz i co tracisz.
+
+**Krok 2. Warstwy bazowe**
+- Dla batcha z dwoma przykładami policz gradient `Dense` ręcznie na kartce, a potem porównaj z `backward`.
+- Po jednym `backward` wypisz średnią wartość bezwzględną `dZ`, `dW` i `db` dla każdej warstwy. Wyjaśnij, dlaczego te wielkości różnią się między sobą.
+
+**Krok 3. Gradient checking**
+- Celowo popsuj jedną linijkę w `backward` (np. zapomnij podzielić przez `m`) i sprawdź, czy `grad_check` to wychwyci. Zapisz błąd względny.
+- Przesuwaj `eps` od `1e-3` do `1e-12` i narysuj błąd względny. Znajdź zakres, w którym dominuje błąd zaokrąglenia.
+
+**Krok 4. Mini-batch SGD i baseline**
+- Ten sam `lr` dla `batch = 1`, `32` i `1024`. Zmierz czas epoki i wygładzoną stabilność kosztu. Wyjaśnij różnice w szumie.
+- Przeucz sieć na 32 przykładach. Ile epok potrzeba i co to mówi o pojemności modelu?
+
+**Krok 5. Conv forward, wersja naiwna**
+- Policz ręcznie wymiar wyjścia dla kilku kombinacji `(H, f, s, p)` i sprawdź wynik asercją w kodzie.
+- Ustaw filtr z jedynką w środku i zerami wokół. Sprawdź, że konwolucja zwraca wejście bez zmian.
+
+**Krok 6. Conv backward**
+- Dla `s = 1` porównaj `dW` z korelacją wejścia i `dZ` napisaną wprost, bez `tensordot`.
+- Policz, ile okien zawiera każdy piksel wejścia (mapa liczby wkładów). Zobacz, czemu brzegi dostają mniejszy gradient.
+
+**Krok 7. Pooling**
+- Stwórz okno z dwoma równymi maksimami. Sprawdź, który element dostaje gradient w `MaxPool2d.backward` i czy ta decyzja ma znaczenie.
+- Porównaj maxpool 2×2 z konwolucją o `s = 2` i porównaj liczbę parametrów i kształt wyjścia.
+
+**Krok 8. Wektoryzacja**
+- Zmierz czas naiwnego i wektoryzowanego `forward` dla batchów `1, 8, 64, 256`. Narysuj skalowanie.
+- Policz, ile pamięci zajmuje `sliding_window_view` po kopii (im2col) dla batcha `64 × 28 × 28 × 16` z `f = 3`, a potem zmierz to przez `tracemalloc`.
+
+**Krok 9. Liczba parametrów i pierwsza CNN**
+- Zmień stride pierwszej warstwy i zapisz w tabeli: liczbę parametrów Dense po `Flatten`, czas epoki i dokładność dev.
+- Zbuduj dwie architektury o zbliżonej liczbie parametrów: jedną z większą liczbą filtrów, drugą z większym Dense. Porównaj dev accuracy i wyjaśnij różnicę.
+
+**Krok 10. EWA i bias correction**
+- Dla serii z szumem gaussowskim i dla skoku (step) narysuj wygładzanie z kilkoma `β`. Zobacz opóźnienie.
+- Numerycznie sprawdź, że suma wag `(1 − β)·β^k` po `t` krokach wynosi `1 − β^t`.
+
+**Krok 11. Optymalizatory i LR decay**
+- Porównaj SGD, Momentum, RMSprop i Adam na tym samym seedzie. Dla każdego wybierz `lr` z siatki logarytmicznej.
+- Zmierz średnie `|Δθ|` na krok dla każdego optymalizatora. Wyjaśnij, dlaczego różnią się, mimo że `lr` jest inny.
+
+**Krok 12. Vanishing i exploding gradients**
+- Zbuduj sieć 20-warstwową z `Tanh` (lub `Sigmoid`) i zmierz normę gradientu w każdej warstwie. Porównaj z ReLU i inicjalizacją He.
+- Dodaj gradient clipping i sprawdź, czy przywraca stabilność treningu.
+
+**Krok 13. Batch normalization**
+- Zweryfikuj backward batch norm gradient checkiem. Zanotuj błędy dla `γ` i `β`.
+- Sprawdź, co się dzieje przy batchu o rozmiarze 1 w trybie treningu i w trybie ewaluacji z running averages.
+
+**Krok 14. Regularyzacja**
+- Po dodaniu L2 policz, o ile zmienia się waga w jednym kroku bez gradientu danych. Sprawdź, że zgadza się to z `(1 − lr·λ/m)`.
+- Zaimplementuj dropout. W trybie ewaluacji sprawdź, że średnia aktywacja jest taka sama jak w treningu po skalowaniu przez `keep_prob`.
+
+**Krok 15. Tuning hiperparametrów**
+- Przy budżecie 20 prób porównaj losowy search z gridem. Który znajduje lepszy wynik na dev?
+- Oszacuj, ile losowych prób trzeba, żeby trafić w przedział dobrych wartości `lr` z prawdopodobieństwem 95%, zakładając, że dobry przedział zajmuje 10% skali logarytmicznej.
+
+**Krok 16. Blok rezydualny**
+- Zbuduj blok z połączeniem skip i bez niego. Zmierz normę gradientu w pierwszej warstwie w obu wersjach.
+- Dla zmiany wymiaru policz parametry projekcji `1 × 1` i porównaj z blokiem bez projekcji.
+
+**Krok 17. Eksperymenty i finał**
+- Ułóż tabelę: liczba parametrów, czas epoki, dev accuracy dla każdej architektury. Wybierz jedną i uzasadnij wybór.
+- Oceń wybrany model na teście dokładnie raz. Opisz, czego jeden wynik testowy nie mówi o generalizacji.

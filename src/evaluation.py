@@ -16,7 +16,7 @@ def accuracy(Y_hat, Y):
     return np.mean(Y_hat == Y)
 
 
-def compare_models(model1_output, model2_output, model1_lr, model2_lr, model1_name='Model 1', model2_name='Model 2'):
+def compare_models(model1_output, model2_output, model1_lr, model2_lr, model1_name='Model 1', model2_name='Model 2', return_fig=False):
     """Plot the loss and accuracy histories of two models in one 2x2 figure.
 
     Top row: loss on train and dev. Bottom row: accuracy on train and dev.
@@ -27,11 +27,14 @@ def compare_models(model1_output, model2_output, model1_lr, model2_lr, model1_na
         model2_output (list): return value of Sequential.fit with return_=['all'].
         model1_lr (float): learning rate of model 1, shown in the figure title.
         model2_lr (float): learning rate of model 2, shown in the figure title.
-        model1_name (str): label of model 1 in the legend.
-        model2_name (str): label of model 2 in the legend.
+        model1_name (str): label of model 1 in the legend. Default 'Model 1'.
+        model2_name (str): label of model 2 in the legend. Default 'Model 2'.
+        return_fig (bool): if True, the function returns the matplotlib Figure, so it can be
+            saved with fig.savefig(). If False (default), it returns None.
 
     Returns:
-        matplotlib.figure.Figure: the figure (also shown with plt.show()).
+        matplotlib.figure.Figure if return_fig is True, otherwise None. The figure is shown
+        with plt.show() in both cases.
     """
     J_history_1, accuracy_history_1 = model1_output[0][0], model1_output[0][1]
     J_history_2, accuracy_history_2 = model2_output[0][0], model2_output[0][1]
@@ -85,10 +88,11 @@ def compare_models(model1_output, model2_output, model1_lr, model2_lr, model1_na
     plt.tight_layout()
     plt.show()
 
-    return fig
+    if return_fig:
+        return fig
 
 
-def plot_history(model_output, model_name=None):
+def plot_history(model_output, model_name=None, return_fig=False):
     """Plot the loss and accuracy history of one model in one figure with two subplots.
 
     The accuracy plot also shows a dashed line at the best dev accuracy.
@@ -96,9 +100,12 @@ def plot_history(model_output, model_name=None):
     Args:
         model_output (list): return value of Sequential.fit with return_=['all'].
         model_name (str or None): shown in the title. None gives a title without a name.
+        return_fig (bool): if True, the function returns the matplotlib Figure, so it can be
+            saved with fig.savefig(). If False (default), it returns None.
 
     Returns:
-        matplotlib.figure.Figure: the figure (also shown with plt.show()).
+        matplotlib.figure.Figure if return_fig is True, otherwise None. The figure is shown
+        with plt.show() in both cases.
     """
     J_history, accuracy_history = model_output[0][0], model_output[0][1]
 
@@ -135,4 +142,5 @@ def plot_history(model_output, model_name=None):
     plt.tight_layout()
     plt.show()
 
-    return fig
+    if return_fig:
+        return fig

@@ -135,7 +135,7 @@ class Sequential:
         return params_dict, shapes_dict
 
     def fit(self, loss, X_train, Y_train, X_dev, Y_dev,
-            optimizer, max_epochs, batch_size, lr,
+            optimizer, max_epochs, batch_size, lr, lr_scheduler=None,
             return_=[], print_epochs=1, print_time=False):
         """Train the model with mini-batch gradient descent and evaluate after every epoch.
 
@@ -151,10 +151,16 @@ class Sequential:
             Y_train (np.ndarray): one-hot training labels, shape (m_train, 10).
             X_dev (np.ndarray): dev inputs, shape (m_dev, 28, 28, 1).
             Y_dev (np.ndarray): one-hot dev labels, shape (m_dev, 10).
-            optimizer (callable): update function, called as optimizer(self.parameters(), lr).
+            optimizer (object): optimizer with a step(parameters, lr) method, e.g. SGD() or Adam().
+                Called as optimizer.step(self.parameters(), lr) after every mini-batch.
             max_epochs (int): number of epochs to run.
             batch_size (int): mini-batch size.
-            lr (float): learning rate passed to the optimizer.
+            lr (float): learning rate passed to the optimizer. Used in every epoch when
+                lr_scheduler is None. If lr_scheduler is given, lr is ignored.
+            lr_scheduler (object or None): learning rate schedule, e.g. ExponentialDecay from
+                optimizers.py. At the start of each epoch fit() calls lr_scheduler.get_alpha(i),
+                where i is the epoch index counted from 0, and passes the result to
+                optimizer.step() for all mini-batches of that epoch. Default None (constant lr).
             return_ (list of str): what to return. Allowed items: 'J_history',
                 'accuracy_history', 'time', 'all'. Default [] returns an empty list.
                 Passing None raises TypeError.
@@ -191,6 +197,10 @@ class Sequential:
             batch_loader_train = get_minibatch(X_train, Y_train, batch_size, self.rng)
             t_minibatch = 0
             n_batches = 0
+
+            if lr_scheduler is not None:
+                lr = lr_scheduler.get_alpha(i)
+
             while True:
                 try:
                     X_mb_train, Y_mb_train = next(batch_loader_train)
@@ -204,7 +214,7 @@ class Sequential:
                 dZ = loss.backward()
                 self.backward(dZ)
 
-                optimizer(self.parameters(), lr)
+                optimizer.step(self.parameters(), lr)
 
                 t_minibatch += time.perf_counter() - t0_minibatch
                 n_batches += 1

@@ -64,3 +64,53 @@ def check_minibatch_len(mini_batch_loader, m):
     assert m_minibatch == m
 
     print('All tests passed')
+
+def ewa(series, beta, bias_correction=False):
+    """Compute the exponentially weighted average (EWA) of a one-dimensional series.
+
+    Each output value is a weighted average of the current and all previous inputs,
+    with weights that decay geometrically. The state v starts at 0 and is updated as
+    v = beta * v + (1 - beta) * value. The bias correction only changes the returned
+    value, not the state v.
+
+    Args:
+        series (array-like): one-dimensional sequence of numbers in time order, e.g. the
+            mini-batch losses from step 9. Converted to a float array.
+        beta (float): decay factor in (0, 1). Larger beta means a longer memory, roughly
+            the last 1 / (1 - beta) values.
+        bias_correction (bool): if True, each returned value is divided by (1 - beta**t),
+            where t starts at 1. This removes the underestimate caused by v starting at 0.
+            If False, the raw v is returned.
+
+    Returns:
+        np.ndarray: EWA values, same length as series. Element t (counted from 1) is the
+            average after t inputs.
+
+    Raises:
+        AssertionError: if beta is not in (0, 1), if series is empty, or if series is not
+            one-dimensional.
+    """
+    series = np.asarray(series, dtype='float')
+
+    assert beta > 0 and beta < 1
+    assert len(series) > 0
+    assert series.ndim == 1
+
+    v = 0
+    t = 1
+    series_out = []
+
+    for value in series:
+        v = beta * v + (1 - beta) * value
+        if bias_correction:
+            v_hat = v / (1 - beta**t)
+            series_out.append(v_hat)
+        else:
+            series_out.append(v)
+        
+        t += 1
+
+    return np.array(series_out)
+        
+
+
