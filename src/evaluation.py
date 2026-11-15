@@ -1,6 +1,8 @@
 """Evaluation metrics and plots of the training history."""
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
+from utils import ewa
 
 
 def accuracy(Y_hat, Y):
@@ -16,19 +18,31 @@ def accuracy(Y_hat, Y):
     return np.mean(Y_hat == Y)
 
 
-def compare_models(model1_output, model2_output, model1_lr, model2_lr, model1_name='Model 1', model2_name='Model 2', return_fig=False):
-    """Plot the loss and accuracy histories of two models in one 2x2 figure.
+def _history_arrays(history):
+    """Turn a {epoch: value} dictionary into two arrays sorted by epoch."""
+    epochs = np.array(sorted(history.keys()))
+    values = np.array([history[e] for e in epochs])
+    return epochs, values
 
-    Top row: loss on train and dev. Bottom row: accuracy on train and dev.
-    Both models are drawn in each subplot, with a shared legend at the bottom.
+
+def compare_models(outputs, names=None, lrs=None, smooth_beta=0.8, title='Porównanie modeli', return_fig=False):
+    """Plot the training histories of several models in one 2x2 figure and report the best dev accuracy.
+
+    Panels: loss on train, loss on dev, accuracy on train, accuracy on dev. Each model has
+    its own colour. On the dev panels a thin line shows the raw values and a thick line shows
+    the smoothed trend (exponentially weighted average, see ewa in utils.py). The best dev
+    accuracy of each model is marked with a star and listed in a box on the accuracy dev panel.
+    The best model overall is printed to the console.
 
     Args:
-        model1_output (list): return value of Sequential.fit with return_=['all'].
-        model2_output (list): return value of Sequential.fit with return_=['all'].
-        model1_lr (float): learning rate of model 1, shown in the figure title.
-        model2_lr (float): learning rate of model 2, shown in the figure title.
-        model1_name (str): label of model 1 in the legend. Default 'Model 1'.
-        model2_name (str): label of model 2 in the legend. Default 'Model 2'.
+        outputs (list): one return value of Sequential.fit with return_=['all'] per model.
+        names (list of str or None): model names for the legend, same length as outputs.
+            None gives 'Model 1', 'Model 2', ...
+        lrs (list of float or None): learning rate of each model, same length as outputs.
+            Shown in the legend. None omits the learning rates.
+        smooth_beta (float): beta of the exponentially weighted average used for the smoothed
+            dev curves, in (0, 1). Larger values give a smoother curve. Default 0.8.
+        title (str): title of the whole figure. Default 'Porównanie modeli'.
         return_fig (bool): if True, the function returns the matplotlib Figure, so it can be
             saved with fig.savefig(). If False (default), it returns None.
 
@@ -36,70 +50,103 @@ def compare_models(model1_output, model2_output, model1_lr, model2_lr, model1_na
         matplotlib.figure.Figure if return_fig is True, otherwise None. The figure is shown
         with plt.show() in both cases.
     """
-    J_history_1, accuracy_history_1 = model1_output[0][0], model1_output[0][1]
-    J_history_2, accuracy_history_2 = model2_output[0][0], model2_output[0][1]
+    n_models = len(outputs)
+    if names is None:
+        names = [f'Model {i + 1}' for i in range(n_models)]
+    if lrs is None:
+        lrs = [None] * n_models
+    assert len(names) == n_models, 'names must have one entry per model'
+    assert len(lrs) == n_models, 'lrs must have one entry per model'
 
-    J_history_train_1, J_history_dev_1 = J_history_1
-    J_history_train_2, J_history_dev_2 = J_history_2
+    colors = plt.cm.tab10(np.arange(n_models) % 10)
 
-    accuracy_history_train_1, accuracy_history_dev_1 = accuracy_history_1
-    accuracy_history_train_2, accuracy_history_dev_2 = accuracy_history_2
+    histories = []
+    for output in outputs:
+        J_history, accuracy_history = output[0][0], output[0][1]
+        J_train, J_dev = J_history
+        acc_train, acc_dev = accuracy_history
+        histories.append({'J_train': J_train, 'J_dev': J_dev, 'acc_train': acc_train, 'acc_dev': acc_dev})
 
-    epochs_1 = max(J_history_train_1.keys())
-    epochs_2 = max(J_history_train_2.keys())
+    fig, ax = plt.subplots(2, 2, figsize=(13, 9), sharex=True)
+    panels = [
+        (ax[0, 0], 'J_train', 'Loss, train', 'Loss', False),
+        (ax[0, 1], 'J_dev', 'Loss, dev', 'Loss', True),
+        (ax[1, 0], 'acc_train', 'Accuracy, train', 'Accuracy', False),
+        (ax[1, 1], 'acc_dev', 'Accuracy, dev', 'Accuracy', True),
+    ]
 
-    max_epochs = max(epochs_1, epochs_2)
+    best_per_model = []
+    for i, (history, name, lr, color) in enumerate(zip(histories, names, lrs, colors)):
+        label = f'{name} (lr={lr})' if lr is not None else name
 
-    fig, ax = plt.subplots(2, 2, sharey='row', figsize=(10, 7))
+        for panel_ax, key, panel_title, ylabel, smoothed in panels:
+            epochs, values = _history_arrays(history[key])
+            if smoothed:
+                panel_ax.plot(epochs, values, color=color, linewidth=1, alpha=0.3)
+                panel_ax.plot(epochs, ewa(values, smooth_beta, bias_correction=True),
+                              color=color, linewidth=2.5, label=label)
+            else:
+                panel_ax.plot(epochs, values, color=color, linewidth=2, label=label)
+            panel_ax.set_title(panel_title, fontsize=12)
+            panel_ax.set_ylabel(ylabel)
 
-    ax[0, 0].plot(list(J_history_train_1.keys()), list(J_history_train_1.values()), label=model1_name)
-    ax[0, 0].plot(list(J_history_train_2.keys()), list(J_history_train_2.values()), label=model2_name)
-    ax[0, 0].set_title('Loss Train')
+        epochs_acc, values_acc = _history_arrays(history['acc_dev'])
+        best_idx = int(np.argmax(values_acc))
+        best_epoch, best_acc = int(epochs_acc[best_idx]), float(values_acc[best_idx])
+        best_per_model.append((name, lr, best_epoch, best_acc))
 
-    ax[0, 1].plot(list(J_history_dev_1.keys()), list(J_history_dev_1.values()), label=model1_name)
-    ax[0, 1].plot(list(J_history_dev_2.keys()), list(J_history_dev_2.values()), label=model2_name)
-    ax[0, 1].set_title('Loss Dev')
+        ax[1, 1].scatter(best_epoch, best_acc, color=color, marker='*', s=220,
+                         edgecolor='black', linewidth=0.6, zorder=5)
 
-    ax[1, 0].plot(list(accuracy_history_train_1.keys()), list(accuracy_history_train_1.values()), label=model1_name)
-    ax[1, 0].plot(list(accuracy_history_train_2.keys()), list(accuracy_history_train_2.values()), label=model2_name)
-    ax[1, 0].set_title('Accuracy Train')
+    for panel_ax in ax.flat:
+        panel_ax.grid(alpha=0.3)
+        panel_ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+        panel_ax.set_xlabel('Epoch')
 
-    ax[1, 1].plot(list(accuracy_history_dev_1.keys()), list(accuracy_history_dev_1.values()), label=model1_name)
-    ax[1, 1].plot(list(accuracy_history_dev_2.keys()), list(accuracy_history_dev_2.values()), label=model2_name)
-    ax[1, 1].set_title('Accuracy Dev')
-
-    for axs_loss in ax[0]:
-        axs_loss.set_xlabel('Epoch Num')
-        axs_loss.set_ylabel('Loss')
-
-    for axs_accuracy in ax[1]:
-        axs_accuracy.set_xlabel('Epoch Num')
-        axs_accuracy.set_ylabel('Accuracy')
-
-    for row in range(ax.shape[0]):
-        for col in range(ax.shape[1]):
-            ax[row, col].grid(alpha=0.3)
-            ax[row, col].set_xticks(np.arange(0, max_epochs + 10, 10))
+    summary_lines = ['Max dev accuracy:']
+    for name, lr, epoch, acc in best_per_model:
+        summary_lines.append(f'{name}: {acc:.2%} (epoch {epoch})')
+    ax[1, 1].text(0.98, 0.03, '\n'.join(summary_lines), transform=ax[1, 1].transAxes,
+                  fontsize=9, va='bottom', ha='right',
+                  bbox=dict(boxstyle='round', facecolor='white', alpha=0.85, edgecolor='lightgray'))
 
     handles, labels = ax[0, 0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc='lower center', ncol=2, bbox_to_anchor=(0.5, 0.0))
+    fig.legend(handles, labels, loc='center', bbox_to_anchor=(0.5, 0.045),
+               ncol=min(n_models, 4), frameon=True)
 
-    plt.suptitle(f'Model Comparison, {model1_name} lr= {model1_lr}, {model2_name} lr= {model2_lr}')
-    plt.tight_layout()
+    fig.text(0.5, 0.005, f'Thin line: raw values, thick line: smoothed trend (EWA, beta={smooth_beta}). '
+                         'Star: best dev accuracy.',
+             ha='center', fontsize=9, color='dimgray')
+
+    best_name, best_lr, best_epoch, best_acc = max(best_per_model, key=lambda row: row[3])
+    best_label = f'{best_name} (lr={best_lr})' if best_lr is not None else best_name
+    print(f'Najlepszy dev accuracy: {best_label}, {best_acc:.4f} (epoka {best_epoch})')
+
+    fig.suptitle(title, fontsize=15, y=0.99)
+    plt.tight_layout(rect=(0, 0.1, 1, 0.96))
     plt.show()
 
     if return_fig:
         return fig
 
 
-def plot_history(model_output, model_name=None, return_fig=False):
-    """Plot the loss and accuracy history of one model in one figure with two subplots.
+def plot_history(model_output, model_name=None, lr=None, smooth_beta=0.8, title='Training history', return_fig=False):
+    """Plot the training history of one model in two panels and print a summary.
 
-    The accuracy plot also shows a dashed line at the best dev accuracy.
+    Left: loss on train (solid) and dev (thin raw line, thick smoothed line). The lowest dev
+    loss is marked with a star. Right: the same for accuracy, with a dashed line at the best
+    dev accuracy and a star at its epoch. A box on the right lists the key numbers: best and
+    final dev accuracy, final train accuracy, the train-dev gap, lowest and final dev loss,
+    and the total training time if it was recorded. The same summary is printed.
 
     Args:
         model_output (list): return value of Sequential.fit with return_=['all'].
         model_name (str or None): shown in the title. None gives a title without a name.
+        lr (float or None): learning rate, shown in the title. None omits it.
+        smooth_beta (float): beta of the exponentially weighted average for the smoothed dev
+            curves, in (0, 1). Default 0.8.
+        title (str): base title of the figure. Default 'Training history'. The model name and
+            the learning rate, if given, are appended to it.
         return_fig (bool): if True, the function returns the matplotlib Figure, so it can be
             saved with fig.savefig(). If False (default), it returns None.
 
@@ -107,40 +154,78 @@ def plot_history(model_output, model_name=None, return_fig=False):
         matplotlib.figure.Figure if return_fig is True, otherwise None. The figure is shown
         with plt.show() in both cases.
     """
-    J_history, accuracy_history = model_output[0][0], model_output[0][1]
+    J_history, accuracy_history, time_dict = model_output[0][0], model_output[0][1], model_output[0][2]
+    epochs, J_train = _history_arrays(J_history[0])
+    _, J_dev = _history_arrays(J_history[1])
+    _, acc_train = _history_arrays(accuracy_history[0])
+    _, acc_dev = _history_arrays(accuracy_history[1])
 
-    J_history_train, J_history_dev = J_history
-    accuracy_history_train, accuracy_history_dev = accuracy_history
+    color_train, color_dev = 'tab:blue', 'tab:orange'
 
-    max_epochs = max(J_history_train.keys())
-    max_dev_accuracy = max(accuracy_history_dev.values())
+    best_idx = int(np.argmax(acc_dev))
+    best_epoch, best_acc = int(epochs[best_idx]), float(acc_dev[best_idx])
+    min_loss_idx = int(np.argmin(J_dev))
+    min_loss_epoch, min_loss = int(epochs[min_loss_idx]), float(J_dev[min_loss_idx])
+    total_minutes = sum(value[0] for value in time_dict.values()) if time_dict else None
 
-    fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+    fig, ax = plt.subplots(1, 2, figsize=(14, 6))
 
-    ax[0].plot(list(J_history_train.keys()), list(J_history_train.values()), label='Train')
-    ax[0].plot(list(J_history_dev.keys()), list(J_history_dev.values()), label='Dev')
+    ax[0].plot(epochs, J_train, color=color_train, linewidth=2, label='Train')
+    ax[0].plot(epochs, J_dev, color=color_dev, linewidth=1, alpha=0.3)
+    ax[0].plot(epochs, ewa(J_dev, smooth_beta, bias_correction=True), color=color_dev,
+               linewidth=2.5, label='Dev (smoothed)')
+    ax[0].scatter(min_loss_epoch, min_loss, color=color_dev, marker='*', s=220,
+                  edgecolor='black', linewidth=0.6, zorder=5, label='Lowest dev loss')
+    ax[0].set_title('Loss', fontsize=12)
     ax[0].set_ylabel('Loss')
-    ax[0].set_xlabel('Epochs')
-    ax[0].set_xticks(np.arange(0, max_epochs + 10, 10))
-    ax[0].grid(alpha=0.3)
-    ax[0].set_title('Loss')
 
-    ax[1].plot(list(accuracy_history_train.keys()), list(accuracy_history_train.values()), label='Train')
-    ax[1].plot(list(accuracy_history_dev.keys()), list(accuracy_history_dev.values()), label='Dev')
-    ax[1].set_xlabel('Epochs')
+    ax[1].plot(epochs, acc_train, color=color_train, linewidth=2, label='Train')
+    ax[1].plot(epochs, acc_dev, color=color_dev, linewidth=1, alpha=0.3)
+    ax[1].plot(epochs, ewa(acc_dev, smooth_beta, bias_correction=True), color=color_dev,
+               linewidth=2.5, label='Dev (smoothed)')
+    ax[1].axhline(best_acc, color='green', linestyle='--', linewidth=1.2, alpha=0.8,
+                  label=f'Best dev accuracy: {best_acc:.2%}')
+    ax[1].scatter(best_epoch, best_acc, color=color_dev, marker='*', s=220,
+                  edgecolor='black', linewidth=0.6, zorder=5, label='Best dev epoch')
+    ax[1].set_title('Accuracy', fontsize=12)
     ax[1].set_ylabel('Accuracy')
-    ax[1].set_xticks(np.arange(0, max_epochs + 10, 10))
-    ax[1].grid(alpha=0.3)
-    ax[1].axhline(y=max_dev_accuracy, alpha=0.8, linestyle='--', color='green', label=f'Max dev accuracy: {round(max_dev_accuracy * 100, 1)}%')
-    ax[1].set_title('Accuracy')
 
-    handles, labels = ax[1].get_legend_handles_labels()
-    fig.legend(handles, labels, loc='center left', ncol=1, bbox_to_anchor=(1, 0.5))
+    for panel_ax in ax:
+        panel_ax.grid(alpha=0.3)
+        panel_ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+        panel_ax.set_xlabel('Epoch')
 
-    title = 'Model History' if model_name is None else f'Model History, {model_name}'
-    plt.suptitle(title)
-    plt.tight_layout()
+    ax[0].legend(loc='upper right', frameon=True)
+    ax[1].legend(loc='lower right', frameon=True)
+
+    summary_lines = [
+        f'Best dev accuracy: {best_acc:.2%} (epoch {best_epoch})',
+        f'Final dev accuracy: {acc_dev[-1]:.2%}',
+        f'Final train accuracy: {acc_train[-1]:.2%}',
+        f'Train-dev gap: {(acc_train[-1] - acc_dev[-1]) * 100:.1f} pp',
+        f'Lowest dev loss: {min_loss:.4f} (epoch {min_loss_epoch})',
+        f'Final dev loss: {J_dev[-1]:.4f}',
+        f'Epochs: {len(epochs)}',
+    ]
+    if total_minutes is not None:
+        summary_lines.append(f'Training time: {total_minutes:.1f} min')
+    ax[0].text(0.98, 0.45, '\n'.join(summary_lines), transform=ax[0].transAxes,
+               fontsize=9, va='center', ha='right',
+               bbox=dict(boxstyle='round', facecolor='white', alpha=0.85, edgecolor='lightgray'))
+
+    full_title = title
+    if model_name is not None:
+        full_title += f': {model_name}'
+    if lr is not None:
+        full_title += f', lr={lr}'
+    fig.suptitle(full_title, fontsize=14)
+    fig.text(0.5, 0.005, f'Thin line: raw dev values, thick line: smoothed trend (EWA, beta={smooth_beta}).',
+             ha='center', fontsize=9, color='dimgray')
+    plt.tight_layout(rect=(0, 0.03, 1, 0.95))
     plt.show()
+
+    print(f'Best dev accuracy: {best_acc:.4f} (epoch {best_epoch}); '
+          f'final dev accuracy: {acc_dev[-1]:.4f}; lowest dev loss: {min_loss:.4f} (epoch {min_loss_epoch})')
 
     if return_fig:
         return fig

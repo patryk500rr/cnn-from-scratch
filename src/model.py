@@ -136,7 +136,7 @@ class Sequential:
 
     def fit(self, loss, X_train, Y_train, X_dev, Y_dev,
             optimizer, max_epochs, batch_size, lr, lr_scheduler=None,
-            return_=[], print_epochs=1, print_time=False):
+            return_=[], print_epochs=1, print_time=False, seed=123):
         """Train the model with mini-batch gradient descent and evaluate after every epoch.
 
         For each epoch, the training set is shuffled with self.rng. For every mini-batch the
@@ -183,6 +183,8 @@ class Sequential:
         """
         t0 = time.perf_counter()
 
+        rng_data = np.random.default_rng(seed)
+
         if len(return_) != 0:
             for item in return_:
                 assert item in ['J_history', 'accuracy_history', 'time', 'all']
@@ -194,7 +196,7 @@ class Sequential:
         time_dict = {}
         for i in range(max_epochs):
             t0_epoch = time.perf_counter()
-            batch_loader_train = get_minibatch(X_train, Y_train, batch_size, self.rng)
+            batch_loader_train = get_minibatch(X_train, Y_train, batch_size, rng_data)
             t_minibatch = 0
             n_batches = 0
 
@@ -232,10 +234,11 @@ class Sequential:
 
             time_dict[f'Epoch {i}, Epoch time [m], Average time per minibatch [s]'] = [t_epoch, avg_time_minibatch]
 
-            if (i % print_epochs) == 0 or i == max_epochs - 1:
-                print(f'Epoch: {i}, loss: {round(J_train, 6)}, accuracy train: {round(acc_train, 3)}, accuracy dev: {round(acc_dev, 3)}')
-            if print_time:
-                print(f'Time per epoch: {t_epoch} min \nAverage time per minibatch: {avg_time_minibatch} s\n')
+            if print_epochs != 0:
+                if (i % print_epochs) == 0 or i == max_epochs - 1:
+                    print(f'Epoch: {i}, loss: {round(J_train, 6)}, accuracy train: {round(acc_train, 3)}, accuracy dev: {round(acc_dev, 3)}')
+                if print_time:
+                    print(f'Time per epoch: {t_epoch} min \nAverage time per minibatch: {avg_time_minibatch} s\n')
 
         to_return = []
         for item in return_:
