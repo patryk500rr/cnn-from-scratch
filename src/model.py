@@ -1,7 +1,7 @@
 """Model container: runs a list of layers forward and backward in sequence."""
 import inspect
 import numpy as np
-from data import get_minibatch
+from data import get_minibatch, augment as augment_batch
 import time
 import copy
 
@@ -17,7 +17,7 @@ class Sequential:
         model.backward(dZ)
     """
 
-    def __init__(self, layers, input_shape, rng):
+    def __init__(self, layers, input_shape, rng, l2_lambda=None):
         """Store the layers in order, from input to output.
 
         Args:
@@ -30,6 +30,7 @@ class Sequential:
         self.layers = layers
         self.input_shape = input_shape
         self.rng = rng
+        self.l2_lambda = l2_lambda
 
     def forward(self, X, training=False):
         """Pass X through all layers in order.
@@ -56,14 +57,23 @@ class Sequential:
     def backward(self, dout):
         """Pass the gradient back through all layers in reverse order.
 
+        If l2_lambda is set, the gradient of the L2 penalty is added to dW of every layer with W:
+        dW += (l2_lambda / m) * W, where m is the batch size. This matches l2_penalty(), whose
+        value is (l2_lambda / (2m)) * sum(W**2), so the gradient and the penalty describe one function.
+
         Args:
             dout (np.ndarray): gradient w.r.t. the output of the last layer, e.g. dZ, shape (m, n_classes).
 
         Returns:
             np.ndarray: gradient w.r.t. the input of the first layer, e.g. dX, shape (m, ...).
         """
+        m = dout.shape[0]
         for layer in reversed(self.layers):
-            dout = layer.backward(dout)  # output gradient of one layer is input gradient of the previous
+            dout = layer.backward(dout)
+        if self.l2_lambda is not None:
+            for layer in self.layers:
+                if hasattr(layer, 'W'):
+                    layer.grads['dW'] += (self.l2_lambda / m) * layer.W
         return dout
 
     def parameters(self):
@@ -72,20 +82,21 @@ class Sequential:
         Call after backward(), because the gradients are filled in there.
 
         Returns:
-            list of tuples: in layer order, for each layer with weights (Dense, Conv2d) a pair
-                (W, dW), followed by (b, db) if the layer has a bias. For each BatchNorm2d layer
-                the pairs (gamma, dgamma) and (beta, dbeta). Layers without parameters (ReLU,
-                Tanh, Flatten, ...) contribute nothing.
+            dict: maps a unique name to a (param, grad) tuple. The names are 'layer{i}.W' and
+                'layer{i}.b' for Dense and Conv2d (b only if the layer has a bias), and
+                'layer{i}.gamma' and 'layer{i}.beta' for BatchNorm2d, where i is the position
+                of the layer in self.layers. Layers without parameters contribute nothing.
+                Optimizers iterate over the values, grad_check over the items.
         """
-        pairs = []
-        for layer in self.layers:
+        pairs = {}
+        for i, layer in enumerate(self.layers):
             if hasattr(layer, 'W'):
-                pairs.append((layer.W, layer.grads['dW']))  # (n_in, n_out), (n_in, n_out)
+                pairs[f'layer{i}.W'] = (layer.W, layer.grads['dW'])  # (n_in, n_out), (n_in, n_out)
                 if hasattr(layer, 'b'):  # layers built with bias=False have no b
-                    pairs.append((layer.b, layer.grads['db']))  # (n_out,), (n_out,)
+                    pairs[f'layer{i}.b'] = (layer.b, layer.grads['db'])  # (n_out,), (n_out,)
             if hasattr(layer, 'gamma') and hasattr(layer, 'beta'):  # BatchNorm2d
-                pairs.append((layer.gamma, layer.grads['dgamma']))  # (n_l,) or (C,)
-                pairs.append((layer.beta, layer.grads['dbeta']))  # (n_l,) or (C,)
+                pairs[f'layer{i}.gamma'] = (layer.gamma, layer.grads['dgamma'])  # (C,)
+                pairs[f'layer{i}.beta'] = (layer.beta, layer.grads['dbeta'])  # (C,)
         return pairs
 
     def build(self):
@@ -151,7 +162,7 @@ class Sequential:
 
     def fit(self, loss, X_train, Y_train, X_dev, Y_dev,
             optimizer, max_epochs, batch_size, lr, lr_scheduler=None,
-            return_=[], print_epochs=1, print_time=False, seed=123):
+            augment=False, return_=[], print_epochs=1, print_time=False, seed=123):
         """Train the model with mini-batch gradient descent and evaluate after every epoch.
 
         For each epoch, the training set is shuffled with self.rng. For every mini-batch the
@@ -176,6 +187,13 @@ class Sequential:
                 optimizers.py. At the start of each epoch fit() calls lr_scheduler.get_alpha(i),
                 where i is the epoch index counted from 0, and passes the result to
                 optimizer.step() for all mini-batches of that epoch. Default None (constant lr).
+            augment (bool): if True, each training mini-batch is randomly shifted by up to 2 pixels
+                in each direction before forward(), using augment() from data.py. The background
+                value is taken as X_train[0, 0, 0, 0], which is the normalized background of
+                normalized data. Each example gets its own shift, drawn from the same rng as the
+                shuffling, so runs stay reproducible for a given seed. The loss and accuracy on
+                the training set after each epoch are computed on the original data. Dev and test
+                sets are never augmented. Default False.
             return_ (list of str): what to return. Allowed items: 'J_history',
                 'accuracy_history', 'time', 'all'. Default [] returns an empty list.
                 Passing None raises TypeError.
@@ -189,7 +207,8 @@ class Sequential:
                 'time'             -> time_dict
                 'all'              -> [(J_dict_train, J_dict_dev), (acc_dict_train, acc_dict_dev), time_dict]
             Each dict maps epoch index -> value:
-                J_dict_train[i]: mean loss over the whole training set after epoch i
+                J_dict_train[i]: mean cross-entropy over the whole training set after epoch i,
+                    without the L2 penalty (the penalty is part of the optimized objective only)
                 J_dict_dev[i]:   mean loss over the whole dev set after epoch i
                 acc_dict_train[i], acc_dict_dev[i]: accuracy on the same sets after epoch i
                 time_dict: key 'Epoch i, Epoch time [m], Average time per minibatch [s]',
@@ -198,7 +217,10 @@ class Sequential:
         """
         t0 = time.perf_counter()
 
+        if not isinstance(augment, bool):
+            raise TypeError(f'augment must be True or False, got {type(augment).__name__}')
         rng_data = np.random.default_rng(seed)
+        bg_color = X_train[0, 0, 0, 0]  # background value of normalized data, used by augment()
 
         if len(return_) != 0:
             for item in return_:
@@ -223,10 +245,12 @@ class Sequential:
                     X_mb_train, Y_mb_train = next(batch_loader_train)
                 except StopIteration:
                     break
+                if augment:
+                    X_mb_train = augment_batch(X_mb_train, rng_data, bg_color=bg_color, max_shift=2)
                 t0_minibatch = time.perf_counter()
 
                 Z = self.forward(X_mb_train, training=True)
-                loss.forward(Z, Y_mb_train)
+                loss.forward(Z, Y_mb_train)  # sets the cache needed by loss.backward()
 
                 dZ = loss.backward()
                 self.backward(dZ)
@@ -251,7 +275,7 @@ class Sequential:
 
             if print_epochs != 0:
                 if (i % print_epochs) == 0 or i == max_epochs - 1:
-                    print(f'Epoch: {i}, loss: {round(J_train, 6)}, accuracy train: {round(acc_train, 3)}, accuracy dev: {round(acc_dev, 3)}')
+                    print(f'Epoch: {i}, loss train: {round(J_train, 6)}, accuracy train: {round(acc_train, 3)}, accuracy dev: {round(acc_dev, 3)}')
                 if print_time:
                     print(f'Time per epoch: {t_epoch} min \nAverage time per minibatch: {avg_time_minibatch} s\n')
 
@@ -388,3 +412,24 @@ class Sequential:
                     layer.beta = data['beta' + str(i)]
                     layer.miu_run = data['miu_run' + str(i)]
                     layer.std2_run = data['std2_run' + str(i)]
+
+    def l2_penalty(self, loss, m):
+        """Add the L2 penalty to a mean loss: loss + (l2_lambda / (2m)) * sum of W**2 over all layers with W.
+
+        Only the weight matrices W are penalized, not biases, gamma or beta. The penalty is
+        scaled by the same m as the mean cross-entropy, so the gradient added in backward()
+        (l2_lambda / m) * W is its exact derivative.
+
+        Args:
+            loss (float): mean cross-entropy of the batch.
+            m (int): number of examples in that batch.
+
+        Returns:
+            float: loss with the penalty added.
+
+        Raises:
+            ValueError: if l2_lambda was not set when the model was created.
+        """
+        if self.l2_lambda is None:
+            raise ValueError('L2 lambda not defined')
+        return loss + (self.l2_lambda/(2*m)) *  sum([np.sum(layer.W**2) for layer in self.layers if hasattr(layer, 'W')])

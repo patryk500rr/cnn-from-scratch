@@ -20,7 +20,7 @@ def _clip_coefficient(parameters, clip_norm):
     multiplied by clip_norm / ||g||, which keeps their direction and sets their length to clip_norm.
 
     Args:
-        parameters (list): (param, grad) pairs, as returned by model.parameters().
+        parameters (dict): name -> (param, grad) pairs, as returned by model.parameters(). Only the values are used.
         clip_norm (float or None): maximum allowed global norm. None disables clipping.
 
     Returns:
@@ -28,7 +28,7 @@ def _clip_coefficient(parameters, clip_norm):
     """
     if clip_norm is None:
         return 1.0
-    total = sum(np.sum(grad**2) for _, grad in parameters)
+    total = sum(np.sum(grad**2) for _, grad in parameters.values())
     norm = np.sqrt(total)
     if norm > clip_norm:
         return clip_norm / norm
@@ -54,7 +54,7 @@ class SGD:
         Call this after model.backward(), so that the gradients are up to date.
 
         Args:
-            parameters (list): (param, grad) pairs, as returned by model.parameters().
+            parameters (dict): name -> (param, grad) pairs, as returned by model.parameters(). Only the values are used.
                 The arrays are updated in place, so the layers see the new values.
             lr (float): learning rate.
 
@@ -62,7 +62,7 @@ class SGD:
             None.
         """
         coefficient = _clip_coefficient(parameters, self.clip_norm)
-        for param, d_param in parameters:
+        for param, d_param in parameters.values():
             param -= lr * d_param * coefficient
 
 
@@ -96,7 +96,7 @@ class Momentum:
         parameter is seen. No bias correction is applied.
 
         Args:
-            parameters (list): (param, grad) pairs, as returned by model.parameters().
+            parameters (dict): name -> (param, grad) pairs, as returned by model.parameters(). Only the values are used.
                 The arrays are updated in place.
             lr (float): learning rate.
 
@@ -104,7 +104,7 @@ class Momentum:
             None.
         """
         coefficient = _clip_coefficient(parameters, self.clip_norm)
-        for param, grad in parameters:
+        for param, grad in parameters.values():
             key = id(param)
 
             if key not in self.v:
@@ -148,7 +148,7 @@ class RMSprop:
         applied, so the first steps are smaller than the ones that Adam would take.
 
         Args:
-            parameters (list): (param, grad) pairs, as returned by model.parameters().
+            parameters (dict): name -> (param, grad) pairs, as returned by model.parameters(). Only the values are used.
                 The arrays are updated in place.
             lr (float): learning rate.
 
@@ -156,7 +156,7 @@ class RMSprop:
             None.
         """
         coefficient = _clip_coefficient(parameters, self.clip_norm)
-        for param, grad in parameters:
+        for param, grad in parameters.values():
             grad = grad * coefficient
             key = id(param)
 
@@ -208,7 +208,7 @@ class Adam:
         keep the state of each parameter, keyed by id(param).
 
         Args:
-            parameters (list): (param, grad) pairs, as returned by model.parameters().
+            parameters (dict): name -> (param, grad) pairs, as returned by model.parameters(). Only the values are used.
                 The arrays are updated in place.
             lr (float): learning rate.
 
@@ -216,7 +216,7 @@ class Adam:
             None.
         """
         coefficient = _clip_coefficient(parameters, self.clip_norm)
-        for param, grad in parameters:
+        for param, grad in parameters.values():
             grad = grad * coefficient
             key = id(param)
 

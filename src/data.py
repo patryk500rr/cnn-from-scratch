@@ -107,3 +107,64 @@ def get_minibatch(X, Y, size, rng=None):
         X, Y = shuffle(X, Y, rng)
     for start in range(0, len(X), size):
         yield X[start:start + size], Y[start:start + size]
+
+
+def translate(img, dy, dx, bg_color):
+    """Shift one image by dy rows and dx columns, filling the uncovered border with bg_color.
+
+    Positive dy moves the image down, positive dx moves it right. The image keeps its shape:
+    pixels that leave the frame are dropped, and the new border is filled with bg_color.
+
+    Args:
+        img (np.ndarray): one image, shape (H, W, C).
+        dy (int): vertical shift in pixels, |dy| < H.
+        dx (int): horizontal shift in pixels, |dx| < W.
+        bg_color (float): value of the background in the same units as img. Use the normalized
+            background value if img is normalized, e.g. (0 - miu) / std.
+
+    Returns:
+        np.ndarray: shifted image, shape (H, W, C).
+    """
+    H, W = img.shape[:2]
+    out = np.full_like(img, bg_color)
+
+    if dy >= 0:
+        src_r, dst_r = slice(0, H - dy), slice(dy, H)
+    else:
+        src_r, dst_r = slice(-dy, H), slice(0, H + dy)
+
+    if dx >= 0:
+        src_c, dst_c = slice(0, W - dx), slice(dx, W)
+    else:
+        src_c, dst_c = slice(-dx, W), slice(0, W + dx)
+
+    out[dst_r, dst_c] = img[src_r, src_c]
+    return out
+
+
+def augment(X, rng, bg_color, max_shift=2, flip_prob=0.0):
+    """Randomly shift and optionally flip each image in a batch. Use only for the training set.
+
+    Every example gets its own random shift in both directions, drawn uniformly from
+    [-max_shift, max_shift]. If flip_prob > 0, each example is also mirrored left-right with
+    that probability. The input array is not modified.
+
+    Args:
+        X (np.ndarray): batch of images, shape (m, H, W, C).
+        rng (np.random.Generator): generator used for the random shifts and flips.
+        bg_color (float): background value used to fill the border after a shift.
+        max_shift (int): largest shift in pixels in each direction. Default 2.
+        flip_prob (float): probability of a left-right flip for each example, in [0, 1].
+            Default 0.0 (no flips). Check on the dev set before using flips.
+
+    Returns:
+        np.ndarray: augmented batch, shape (m, H, W, C), same dtype as X.
+    """
+    X_aug = np.empty_like(X)
+    for i in range(len(X)):
+        dy, dx = rng.integers(-max_shift, max_shift + 1, size=2)
+        img = translate(X[i], int(dy), int(dx), bg_color)
+        if flip_prob > 0 and rng.random() < flip_prob:
+            img = img[:, ::-1, :]
+        X_aug[i] = img
+    return X_aug

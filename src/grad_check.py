@@ -18,10 +18,12 @@ def compute_loss(model, loss, X, Y):
         Y (np.ndarray): one-hot labels, shape (m, n_classes).
 
     Returns:
-        float: mean cross-entropy loss J.
+        float: mean cross-entropy loss J, plus the L2 penalty if model.l2_lambda is set.
     """
     Z = model.forward(X, training=True)  # training mode: batch norm uses batch statistics, as in fit()
     J = loss.forward(Z, Y)
+    if model.l2_lambda is not None:
+        J = model.l2_penalty(J, X.shape[0])
     return J
 
 def grad_check(model, loss, X, Y, eps, n_samples, rng):
@@ -41,10 +43,9 @@ def grad_check(model, loss, X, Y, eps, n_samples, rng):
         rng (np.random.Generator): generator used to choose which entries to check.
 
     Returns:
-        dict: maps a description such as '0: W (dense), shape: (5, 6)' to the relative error.
-              The number is the position in model.parameters(), so it counts every (param, grad)
-              pair, weights and biases separately. Expected values are below 1e-7.
-              Values near 1e-5 are suspicious, above 1e-3 usually mean a bug.
+        dict: maps the parameter name from model.parameters(), e.g. 'layer0.W', followed by its
+              shape, e.g. 'layer0.W, shape: (3, 3, 1, 16)', to the relative error. Expected values
+              are below 1e-7. Values near 1e-5 are suspicious, above 1e-3 usually mean a bug.
     """
 
     compute_loss(model, loss, X, Y)
@@ -52,10 +53,9 @@ def grad_check(model, loss, X, Y, eps, n_samples, rng):
     model.backward(dZ)
     params = model.parameters()
 
-
     err_dict = {}
 
-    for i, (param, grad_analytic) in enumerate(params):
+    for name, (param, grad_analytic) in params.items():
         grad_num = np.zeros_like(param)
         
         k = rng.choice(param.size, size=min(n_samples, param.size), replace=False)
@@ -81,15 +81,7 @@ def grad_check(model, loss, X, Y, eps, n_samples, rng):
         else:
             err = np.linalg.norm(grad - grad_num[idx]) / denominator
 
-        if param.ndim == 2:
-            param_type = 'W (dense)'
-        elif param.ndim == 1:
-            param_type = 'b'
-        elif param.ndim == 4:
-            param_type = 'W (conv)'
-        else:
-            param_type = 'param'
-        err_dict[f'{i}: {param_type}, shape: {param.shape}'] = err
+        err_dict[f'{name}, shape: {param.shape}'] = err
 
     return err_dict
         

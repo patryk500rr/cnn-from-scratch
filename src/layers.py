@@ -109,6 +109,7 @@ class Dense:
         assert dW.shape == self.W.shape
         assert dA.shape == self.cache['A'].shape
 
+
         self.grads['dW'] = dW
         if self.bias:
             db = np.sum(dZ, axis=0)  # sum over the m examples: (m, n_out) -> (n_out,)
@@ -204,6 +205,98 @@ class ReLU:
             str: class name of the layer.
         """
         return 'ReLU'
+    
+class Dropout:
+    """Inverted dropout: randomly zeroes activations during training and rescales the rest.
+
+    During training each element of the input is kept with probability keepprob. The kept
+    elements are divided by keepprob, so the expected value of each activation stays the same.
+    At test time the layer returns its input unchanged, so no scaling is needed.
+
+    Dropout has no parameters and does not change the shape of the input.
+    """
+
+    def __init__(self, keepprob, seed=123):
+        """Store the probability of keeping an activation and create an empty cache.
+
+        Args:
+            keepprob (float): probability of keeping each activation, in (0, 1].
+                1.0 means no dropout. Typical values: about 0.5 for large dense layers,
+                0.7 to 0.9 for other hidden layers.
+            seed (int): not used by the layer. The random generator is taken from build().
+        """
+        self.keepprob = keepprob
+        self.cache = {}
+        self.seed = seed
+
+    def forward(self, A, training:bool):
+        """Apply a random mask during training, or return the input unchanged at test time.
+
+        During training the mask d has the same shape as A. Each element is 1 / keepprob with
+        probability keepprob and 0 otherwise, so A * d has the same expected value as A. The mask
+        is saved in the cache for backward(). The flag training is saved in self.training.
+
+        Args:
+            A (np.ndarray): input, any shape, e.g. (m, n) or (m, H, W, C).
+            training (bool): True during training, False at test time.
+
+        Returns:
+            np.ndarray: A * d during training, A itself at test time. Same shape as A.
+        """
+        self.training = training
+        if training==True:
+            rng = self.rng
+
+            d = (rng.random(A.shape) < self.keepprob) / self.keepprob
+            self.cache['d'] = d
+            return A * d
+        else:
+            return A
+        
+    def backward(self, dA):
+        """Pass the gradient only through the kept activations, scaled by the same mask.
+
+        Valid only after forward(training=True), because it uses the mask from the cache.
+        At test time there is no backward pass, so the input gradient is returned unchanged.
+
+        Args:
+            dA (np.ndarray): gradient w.r.t. the output of the layer, same shape as the input.
+
+        Returns:
+            np.ndarray: gradient w.r.t. the input, dA * d, same shape as the input.
+        """
+        if self.training == True:
+            d = self.cache['d']
+            return dA * d
+        else: return dA
+
+    def build(self, input_shape, rng, return_nparams=False):
+        """Store the random generator used to draw the masks and return the output shape.
+
+        The generator comes from the model, so the masks are reproducible together with the
+        rest of the network. Dropout creates no weights.
+
+        Args:
+            input_shape (tuple): shape of one example without the batch axis.
+            rng (np.random.Generator): generator used to draw the masks.
+            return_nparams (bool): if True, also return the number of parameters, which is 0.
+
+        Returns:
+            tuple: output shape, equal to input_shape, and optionally the number of parameters.
+        """
+        self.rng = rng
+        if return_nparams:
+            return input_shape, 0
+        else:
+            return input_shape
+    def name(self):
+        """Return the layer name, used as the key in the model summary.
+
+        Returns:
+            str: 'Dropout'.
+        """
+        return 'Dropout'
+
 
 class SoftmaxCrossEntropy:
     """Softmax followed by cross-entropy loss, used as the last layer.
@@ -677,7 +770,7 @@ class MaxPool2d:
         self.grads = {}
 
     def forward(self, A_prev):
-        """Take the maximum of each window and save A_prev for the backward pass.
+        """Take the maximum of each window and cache the position of the maximum for backward().
 
         Args:
             A_prev (np.ndarray): input, shape (m, n_H_prev, n_H_prev, n_C).
@@ -687,18 +780,18 @@ class MaxPool2d:
         """
         s = self.s
         f = self.f
-        windows_stride1 = np.lib.stride_tricks.sliding_window_view(A_prev, window_shape=(f, f), axis=(1, 2))
-        windows = windows_stride1[:, ::s, ::s]
+        windows = np.lib.stride_tricks.sliding_window_view(A_prev, window_shape=(f, f), axis=(1, 2))[:, ::s, ::s]
         A = np.max(windows, axis=(-2, -1))
-        self.cache['A_prev'] = A_prev
-
+        flat = windows.reshape(windows.shape[:-2] + (f * f,))
+        self.cache['idx'] = np.argmax(flat, axis=-1)  # (m, n_H, n_W, n_C), offset 0..f*f-1 inside the window
+        self.cache['A_shape'] = A_prev.shape
         return A
-    
+
     def backward(self, dA):
         """Send each output gradient back to the position of the window maximum.
 
-        Only the maximum of each window receives a gradient. The position is found with
-        argmax on the flattened window. Overlapping windows add their contributions with +=.
+        Only the maximum of each window receives a gradient. The cached offsets are used, so no
+        windows are built again. Overlapping windows add their contributions with +=.
 
         Args:
             dA (np.ndarray): gradient w.r.t. A, shape (m, n_H, n_W, n_C).
@@ -708,27 +801,18 @@ class MaxPool2d:
         """
         s = self.s
         f = self.f
-        m = dA.shape[0]
-        H_out = dA.shape[1]
-        n_C_out = dA.shape[-1]
-        A_prev = self.cache['A_prev']
-        windows_stride1 = np.lib.stride_tricks.sliding_window_view(A_prev, window_shape=(f, f), axis=(1, 2))
-        windows = windows_stride1[:, ::s, ::s].reshape(m, H_out, H_out, n_C_out, f*f)
-
-        idx_flat = np.argmax(windows, axis=-1)
-
-        mask = np.eye(f*f)[idx_flat]
-        contribution = mask.reshape(m, H_out, H_out, n_C_out, f, f) * dA[..., None, None]
-        
-        dA_prev = np.zeros_like(A_prev).astype('float64')
+        idx = self.cache['idx']
+        H_out, W_out = idx.shape[1], idx.shape[2]
+        dA_prev = np.zeros(self.cache['A_shape'], dtype='float64')
 
         for a in range(f):
             for b in range(f):
-                dA_prev[:, a: a + s * H_out : s, b : b + s * H_out : s, :] += contribution[:, :, :, :, a, b]
+                mask = (idx == a * f + b)
+                dA_prev[:, a: a + s * H_out: s, b: b + s * W_out: s, :] += dA * mask
 
         self.grads['dA_prev'] = dA_prev
         return dA_prev
-    
+
     def build(self, input_shape, return_nparams=False):
         """Return the output shape of the pooling. No parameters are created.
 
@@ -1064,7 +1148,12 @@ class Conv2d:
         self.grads = {}
 
     def forward(self, A_prev):
-        """Convolve A_prev with the filters and save A_prev for the backward pass.
+        """Convolve A_prev with the filters and cache the windows for the backward pass.
+
+        The padded input is turned into one matrix of windows, shape (m * n_H * n_W, f * f * n_C_prev).
+        This copy is made once here; the matrix is multiplied by the filters reshaped to
+        (f * f * n_C_prev, n_C). It is cached and reused by backward(), so the padding and the
+        windows are not built twice.
 
         Args:
             A_prev (np.ndarray): input, shape (m, n_H_prev, n_W_prev, n_C_prev).
@@ -1076,6 +1165,7 @@ class Conv2d:
         p = self.p
         n_H_prev = A_prev.shape[1]
         f = self.W.shape[0]
+        n_C = self.W.shape[-1]
 
         if p == 'same':
             p_numenator = (n_H_prev * (s - 1) + f - s)
@@ -1083,78 +1173,66 @@ class Conv2d:
             p = p_numenator // 2
         A_prev_pad = np.pad(A_prev, ((0, 0), (p, p), (p, p), (0, 0)))
 
-        windows_stride1 = np.lib.stride_tricks.sliding_window_view(A_prev_pad, axis=(1, 2), window_shape=(f, f))
-        windows = windows_stride1[:, ::s, ::s]
+        windows = np.lib.stride_tricks.sliding_window_view(A_prev_pad, axis=(1, 2), window_shape=(f, f))[:, ::s, ::s]
+        m, n_H, n_W = windows.shape[:3]
+        # (m, n_H, n_W, n_C_prev, f, f) -> (m, n_H, n_W, f, f, n_C_prev), then one copy into a matrix
+        cols = np.ascontiguousarray(windows.transpose(0, 1, 2, 4, 5, 3)).reshape(m * n_H * n_W, -1)
+        W_mat = self.W.reshape(-1, n_C)  # (f * f * n_C_prev, n_C), same order as cols
 
-        Z = np.tensordot(windows, self.W, axes=([3, 4, 5], [2, 0, 1]))
+        Z = (cols @ W_mat).reshape(m, n_H, n_W, n_C)
         if self.bias:
             Z = Z + self.b
 
-        self.cache['A_prev'] = A_prev
+        self.cache['cols'] = cols
+        self.cache['A_shape'] = A_prev.shape
         self.cache['p'] = p
         self.cache['s'] = s
 
         return Z
-    
-    def backward(self, dZ): 
-        """
-        Compute the gradients of the filters, the biases and the input.
+
+    def backward(self, dZ):
+        """Compute the gradients of the filters, the biases and the input.
+
+        dW is computed from the cached matrix of windows, so the input is not padded or windowed
+        again. dA is the transposed product of dZ and the filters, followed by a loop over the
+        f * f offsets that adds each piece back to its position in the padded input.
 
         Args:
             dZ (np.ndarray): gradient of the loss w.r.t. this layer's output Z,
                 shape (m, n_H, n_W, n_C).
 
         Returns:
-            np.ndarray: dA, gradient w.r.t. the input A_prev, shape (m, n_H_prev, n_H_prev, n_C_prev).
+            np.ndarray: dA, gradient w.r.t. the input A_prev, shape (m, n_H_prev, n_W_prev, n_C_prev).
                 The padding is removed before returning.
-
-        Shapes of the arrays used inside:
-            W           (f, f, n_C_prev, n_C)
-            b           (n_C,)
-            A_prev      (m, n_H_prev, n_H_prev, n_C_prev)
-            A_prev_pad  (m, n_H_prev + 2p, n_H_prev + 2p, n_C_prev)
-            windows     (m, n_H, n_W, n_C_prev, f, f)
-            dW          (f, f, n_C_prev, n_C)
-            db          (n_C,)
-            dA_contrib  (f, f, n_C_prev, m, n_H, n_W)
-            dA_pad      (m, n_H_prev + 2p, n_H_prev + 2p, n_C_prev)
         """
-        A_prev = self.cache['A_prev'] 
-        n_H_prev = A_prev.shape[1]
-        n_C_prev = A_prev.shape[-1]
-        n_H = dZ.shape[1]
-        m = dZ.shape[0]
+        A_shape = self.cache['A_shape']
+        cols = self.cache['cols']
         p = self.cache['p']
         s = self.s
         f = self.W.shape[0]
-        A_prev_pad = np.pad(A_prev, ((0, 0), (p, p), (p, p), (0, 0))) 
+        m, n_H, n_W, n_C = dZ.shape
+        n_C_prev = A_shape[-1]
+        n_H_prev, n_W_prev = A_shape[1], A_shape[2]
 
-
-        windows_stride1 = np.lib.stride_tricks.sliding_window_view(A_prev_pad, axis=(1, 2), window_shape=(f, f))
-        windows = windows_stride1[:, ::s, ::s]
-
-        dW = np.tensordot(windows, dZ, ([0, 1, 2], [0, 1, 2])).transpose(1, 2, 0, 3)
-        dA_contrib = np.tensordot(self.W, dZ, ([3], [3]))  # (f, f, n_C_prev, m, n_H, n_W)
-        
-        dA_pad = np.zeros(A_prev_pad.shape) # (m, n_H_prev + 2p, n_H_prev + 2p, n_C_prev)
-
-        for a in range(f):
-            for b in range(f):
-                dA_pad[ :, a: a + s * n_H : s, b : b + s * n_H : s, :] += dA_contrib[a, b, :, :].transpose(1, 2, 3, 0)
-
-
+        dZ_mat = dZ.reshape(m * n_H * n_W, n_C)
+        dW = (cols.T @ dZ_mat).reshape(f, f, n_C_prev, n_C)
         self.grads['dW'] = dW
         if self.bias:
             self.grads['db'] = np.sum(dZ, axis=(0, 1, 2))
 
+        dcols = (dZ_mat @ self.W.reshape(-1, n_C).T).reshape(m, n_H, n_W, f, f, n_C_prev)
+        dA_pad = np.zeros((m, n_H_prev + 2 * p, n_W_prev + 2 * p, n_C_prev))
+        for a in range(f):
+            for b in range(f):
+                dA_pad[:, a: a + s * n_H: s, b: b + s * n_W: s, :] += dcols[:, :, :, a, b, :]
+
         if p != 0:
-            dA = dA_pad[:, p:-p, p:-p]
+            dA = dA_pad[:, p:-p, p:-p, :]
         else:
             dA = dA_pad
         self.grads['dA'] = dA
-
         return dA
-    
+
     def build(self, input_shape, rng, return_nparams=False):
         """Create the filters (and biases, if bias=True) from the input shape and return the output shape.
 
