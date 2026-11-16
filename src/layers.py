@@ -4,6 +4,46 @@ Each layer implements forward(x) and backward(dout). Layers with parameters
 store their gradients in self.grads. Shapes use channels-last (m, ...) batches.
 """
 import numpy as np
+from init import he, xavier, scaled_normal
+
+
+def _check_init(init, scale):
+    """Check that init and scale are compatible.
+
+    scale is needed only for init=scaled_normal, which multiplies standard normal weights by
+    a fixed constant. For he and xavier the scale is computed from the layer size, so scale
+    must be None.
+
+    Args:
+        init (callable): he, xavier or scaled_normal.
+        scale (float or None): fixed standard deviation, used only with scaled_normal.
+
+    Raises:
+        ValueError: if scale is missing for scaled_normal, or given for another init.
+    """
+    if init is scaled_normal:
+        if scale is None:
+            raise ValueError('init=scaled_normal needs a scale, e.g. scale=0.01')
+    elif scale is not None:
+        raise ValueError('scale is used only with init=scaled_normal')
+
+
+def _init_weights(shape, rng, init, scale):
+    """Sample weights from N(0, 1) and rescale them with the chosen init.
+
+    Args:
+        shape (tuple): shape of the weight array, e.g. (n_in, n_out) or (f, f, n_C_prev, n_C).
+        rng (np.random.Generator): generator used to draw the standard normal samples.
+        init (callable): he, xavier or scaled_normal.
+        scale (float or None): fixed standard deviation, used only with scaled_normal.
+
+    Returns:
+        np.ndarray: initialized weights with the given shape.
+    """
+    raw = rng.standard_normal(shape)
+    if init is scaled_normal:
+        return scaled_normal(raw, scale)
+    return init(raw)
 
 
 class Dense:
@@ -16,18 +56,28 @@ class Dense:
         Z: (m, n_out)  output
     """
 
-    def __init__(self, n_out, bias=True):
+    def __init__(self, n_out, bias=True, init=he, scale=None):
         """Store the parameters and create empty cache and gradient dicts.
 
         Args:
             n_out (int): number of outputs (neurons). W and b are created later, in build().
             bias (bool): if True (default), the layer has a bias b. Set it to False when the
                 layer is followed by batch normalization, which removes the bias anyway.
+            init (callable): weight initialization, one of he (default, for ReLU), xavier (for
+                tanh or sigmoid) or scaled_normal.
+            scale (float or None): standard deviation of the weights. Required only when
+                init=scaled_normal, e.g. scale=0.01. Must be None for he and xavier.
+
+        Raises:
+            ValueError: if scale is missing for scaled_normal, or given for he or xavier.
         """
+        _check_init(init, scale)
         self.cache = {}  # values saved in forward, needed by backward
         self.grads = {}  # parameter gradients, filled in backward
         self.n_out = n_out
         self.bias = bias
+        self.init = init
+        self.scale = scale
 
     def forward(self, A):
         """Compute Z = A @ W (+ b if bias=True) and save A for the backward pass.
@@ -78,7 +128,7 @@ class Dense:
             tuple: output shape (n_out,).
         """
         n_in = input_shape[0]
-        self.W = rng.standard_normal((n_in, self.n_out)) * 0.1
+        self.W = _init_weights((n_in, self.n_out), rng, self.init, self.scale)
         if self.bias:
             self.b = np.zeros(self.n_out)
 
@@ -984,7 +1034,7 @@ class Conv2d:
         b:      (n_C,)                               created in build(), only if bias=True
         output: (m, n_H, n_W, n_C)                   before any activation
     """
-    def __init__(self, n_C, f, s, p, bias=True):
+    def __init__(self, n_C, f, s, p, bias=True, init=he, scale=None):
         """Store the hyperparameters. The weights are created later, in build().
 
         Args:
@@ -994,12 +1044,22 @@ class Conv2d:
             p (int or 'same'): padding, or 'same' to keep the size when stride is 1.
             bias (bool): if True (default), each filter has a bias b. Set it to False when the
                 layer is followed by batch normalization, which removes the bias anyway.
+            init (callable): weight initialization, one of he (default, for ReLU), xavier (for
+                tanh or sigmoid) or scaled_normal. For he and xavier the fan-in is f * f * n_C_prev.
+            scale (float or None): standard deviation of the filters. Required only when
+                init=scaled_normal, e.g. scale=0.01. Must be None for he and xavier.
+
+        Raises:
+            ValueError: if scale is missing for scaled_normal, or given for he or xavier.
         """
+        _check_init(init, scale)
         self.s = s
         self.p = p
         self.f = f
         self.n_C = n_C
         self.bias = bias
+        self.init = init
+        self.scale = scale
         self.cache = {}
         self.grads = {}
 
@@ -1106,7 +1166,7 @@ class Conv2d:
             tuple: output shape (n_H, n_W, n_C) with integer sizes.
         """
         n_H_prev, n_W_prev, n_C_prev = input_shape
-        self.W = rng.standard_normal((self.f, self.f, n_C_prev, self.n_C))
+        self.W = _init_weights((self.f, self.f, n_C_prev, self.n_C), rng, self.init, self.scale)
         if self.bias:
             self.b = np.zeros(self.n_C)
         p = self.p

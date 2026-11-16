@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 from utils import ewa
+from layers import SoftmaxCrossEntropy
 
 
 def accuracy(Y_hat, Y):
@@ -226,6 +227,59 @@ def plot_history(model_output, model_name=None, lr=None, smooth_beta=0.8, title=
 
     print(f'Best dev accuracy: {best_acc:.4f} (epoch {best_epoch}); '
           f'final dev accuracy: {acc_dev[-1]:.4f}; lowest dev loss: {min_loss:.4f} (epoch {min_loss_epoch})')
+
+    if return_fig:
+        return fig
+
+
+def plot_gradients(model, X, Y, title='Gradienty w warstwach', return_fig=False):
+    """Plot the gradient norm of every layer with weights on a log scale, labelled with model.summary().
+
+    One forward and one backward pass are run on the batch (X, Y) in training mode, so the
+    gradients are the ones fit() would compute. For each layer with a weight matrix (Dense, Conv2d)
+    the norm ||dW|| is divided by sqrt(number of elements), so layers of different sizes are
+    comparable. The x-axis labels come from model.summary(), in layer order, and the title shows
+    the total number of parameters.
+
+    Args:
+        model (Sequential): built model; build() must have been called.
+        X (np.ndarray): batch of inputs, e.g. X_train[:256].
+        Y (np.ndarray): one-hot labels for X, shape (m, n_classes).
+        title (str): title of the figure. Default 'Gradienty w warstwach'.
+        return_fig (bool): if True, the function returns the matplotlib Figure. Default False.
+
+    Returns:
+        matplotlib.figure.Figure if return_fig is True, otherwise None. The figure is shown
+        with plt.show() in both cases.
+
+    Raises:
+        AssertionError: if the number of layers with gradients does not match the summary.
+    """
+    params_dict, shapes_dict = model.summary()
+    total_params = params_dict['Total Parameters']
+
+    loss = SoftmaxCrossEntropy()
+    Z = model.forward(X, training=True)
+    loss.forward(Z, Y)
+    model.backward(loss.backward())
+
+    weight_layers = [layer for layer in model.layers if 'dW' in layer.grads]
+    labels = [key for key in shapes_dict if key.split(' ')[0] in ('Dense', 'Conv2d')]
+    assert len(labels) == len(weight_layers), 'summary and model layers do not match'
+
+    norms = np.array([np.linalg.norm(layer.grads['dW']) / np.sqrt(layer.grads['dW'].size)
+                      for layer in weight_layers])
+
+    fig, ax = plt.subplots(figsize=(max(6, 0.6 * len(norms) + 2), 4.5))
+    x = np.arange(len(norms))
+    ax.semilogy(x, np.where(norms > 0, norms, np.nan), marker='o', color='tab:blue')
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=8)
+    ax.set_ylabel('||dW|| / sqrt(liczba elementow)  [log]')
+    ax.grid(alpha=0.3, which='both')
+    ax.set_title(f'{title}, parametry: {total_params:,}')
+    plt.tight_layout()
+    plt.show()
 
     if return_fig:
         return fig
