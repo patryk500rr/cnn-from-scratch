@@ -81,3 +81,32 @@ Każdy wpis opisuje jedną konfigurację i wynik. Dev służy do wyboru modelu, 
 
 **Uwagi**
 - Nowy `backward` przeszedł porównanie z `conv_naive` (błąd około `1e-15`) i gradient check (błąd względny około `1e-10`).
+
+## CNN z batch norm: 2 bloki Conv → BN → ReLU, bez poolingu
+
+**Model**
+- Conv2d(16, f=3, s=1, p='same', bias=False, init=he) → BatchNorm2d(axes=(0, 1, 2)) → ReLU → Conv2d(32, f=3, s=1, p='same', bias=False, init=he) → BatchNorm2d(axes=(0, 1, 2)) → ReLU → Flatten → Dense(10, bias=True, init=he).
+- Brak poolingu: mapa 28×28×32 trafia do Flatten, więc Dense ma 25 088 wejść.
+- Łączna liczba parametrów (z `summary()`): **255 738**. Z tego Dense 250 890, Conv 144 + 4 608, BN 32 + 64.
+
+**Trening**
+- Optymalizator: Adam, domyślne Beta1=0,9, Beta2=0,999, eps=1e-8.
+- Harmonogram: `ExponentialDecay(alpha0=1e-2)`, domyślne gamma=0,95. Argument `lr=1e-2` w `fit` jest w tym przypadku ignorowany, bo harmonogram ma pierwszeństwo.
+- Epoki: 10. Batch size: 64.
+- Inicjalizacja: He.
+- Seed: `rng` z notebooka, bez resetu przed budową modelu.
+
+**Czas**
+- Całkowity czas: 9,2 min, czyli około 0,92 min na epokę. Przed poprawką `Conv2d.backward` i bez BN porównanie nie jest bezpośrednie.
+
+**Wyniki** (po epoce)
+- Najlepsza dokładność dev: **0,905** w epoce 4.
+- Dokładność dev w epoce 9: 0,891.
+- Dokładność train w epoce 9: 0,980, loss train w epoce 9: 0,0559.
+- Luka train–dev w epoce 9: ok. 9 pp, a dev spada po epoce 4 mimo dalszego spadku lossu train.
+
+**Uwagi**
+- Model wyraźnie się przeucza: dev przestaje rosnąć po około 4 epokach, a train dochodzi do 98%.
+- Główne źródło parametrów to Dense po Flatten. Dodanie poolingu przed Flatten zmniejszy liczbę parametrów około cztery razy.
+- Dla porównania z modelem z poolingiem (52 138 parametrów, dev ok. 85%) ten model ma lepszy dev, ale o dużo więcej parametrów.
+- Loss dev nie został wypisany w tym uruchomieniu, więc nie ma go w tym wpisie.

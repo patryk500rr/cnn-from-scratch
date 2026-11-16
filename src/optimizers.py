@@ -239,30 +239,31 @@ class Adam:
 class ExponentialDecay:
     """Learning rate schedule with exponential decay: alpha = alpha0 * gamma**epoch.
 
-    This is not an optimizer. It only computes the learning rate for a given epoch, and
-    the training loop passes that value to optimizer.step(parameters, lr).
+    This is not an optimizer. It only computes the learning rate for a given epoch. The
+    starting value alpha0 is not stored here: it is passed to get_alpha() by the caller,
+    so there is one source for the initial learning rate. The training loop passes the
+    result to optimizer.step(parameters, lr).
     """
 
-    def __init__(self, alpha0, gamma=0.95):
-        """Store the initial learning rate and the decay factor.
+    def __init__(self, gamma=0.95):
+        """Store the decay factor.
 
         Args:
-            alpha0 (float): learning rate in epoch 0.
             gamma (float): decay factor in (0, 1). Each epoch multiplies the learning rate
-                by gamma. Default 0.95.
+                by gamma, so after k epochs the learning rate is alpha0 * gamma**k. Default 0.95.
         """
-        self.alpha0 = alpha0
         self.gamma = gamma
 
-    def get_alpha(self, epoch):
+    def get_alpha(self, epoch, alpha0):
         """Return the learning rate for the given epoch.
 
         Args:
             epoch (int): epoch index counted from 0, the same index as in the loop over epochs
                 in fit(). Epoch 0 returns alpha0.
+            alpha0 (float): learning rate at epoch 0, e.g. the lr value given to fit().
 
         Returns:
             float: learning rate alpha0 * gamma**epoch.
         """
-        alpha = self.alpha0 * self.gamma**epoch
+        alpha = alpha0 * self.gamma**epoch
         return alpha

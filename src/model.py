@@ -216,7 +216,7 @@ class Sequential:
             n_batches = 0
 
             if lr_scheduler is not None:
-                lr = lr_scheduler.get_alpha(i)
+                lr = lr_scheduler.get_alpha(i, lr)
 
             while True:
                 try:
