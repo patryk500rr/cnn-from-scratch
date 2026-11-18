@@ -1554,7 +1554,8 @@ class ResidualBlock:
             dict: maps a name to a (param, grad) tuple. Names are 'layer{j}.W', 'layer{j}.b',
                 'layer{j}.gamma' and 'layer{j}.beta', where j is the position of the layer in
                 self.layers, and 'projection.W' and 'projection.b' for the skip-path projection
-                (only if project is True). Sequential.parameters() adds the prefix 'Block{i}-'.
+                (only if project is True). Sequential.parameters() adds the prefix 'Block{k}-',
+                where k is the number of the block counted from 1.
 
         Note:
             The L2 penalty does not include these weights yet: Sequential.backward() and

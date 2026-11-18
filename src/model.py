@@ -81,7 +81,7 @@ class Sequential:
                         if hasattr(layer_residual, 'W'):
                             layer_residual.grads['dW'] += (self.l2_lambda / m) * layer_residual.W
                     if layer.project:
-                        layer.projectile.grads['dW'] += (self.l2_lambda / m) * layer_residual.W
+                        layer.projectile.grads['dW'] += (self.l2_lambda / m) * layer.projectile.W
         return dout
 
     def parameters(self):
@@ -89,22 +89,24 @@ class Sequential:
 
         Call after backward(), because the gradients are filled in there. Layers that have a
         `layers` attribute (ResidualBlock) return their own parameters(), and their names get
-        the prefix 'Block{i}-'.
+        the prefix 'Block{k}-', where k counts the blocks from 1.
 
         Returns:
             dict: maps a unique name to a (param, grad) tuple. The names are 'layer{i}.W' and
                 'layer{i}.b' for Dense and Conv2d (b only if the layer has a bias), and
                 'layer{i}.gamma' and 'layer{i}.beta' for BatchNorm2d, where i is the position
-                of the layer in self.layers, and 'Block{i}-<name>' for the parameters inside
-                a ResidualBlock at position i. Layers without parameters contribute nothing.
+                of the layer in self.layers, and 'Block{k}-<name>' for the parameters inside
+                the k-th ResidualBlock (k counts the blocks from 1). Layers without parameters contribute nothing.
                 Optimizers iterate over the values, grad_check over the items.
         """
         pairs = {}
+        block_count = 0
         for i, layer in enumerate(self.layers):
             if hasattr(layer, 'layers'):
                 pairs_block = layer.parameters()
+                block_count += 1
                 for j in pairs_block:
-                    pairs[f'Block{i}-{j}'] = pairs_block[j]
+                    pairs[f'Block{block_count}-{j}'] = pairs_block[j]
             if hasattr(layer, 'W'):
                 pairs[f'layer{i}.W'] = (layer.W, layer.grads['dW'])  # (n_in, n_out), (n_in, n_out)
                 if hasattr(layer, 'b'):  # layers built with bias=False have no b
@@ -197,9 +199,10 @@ class Sequential:
             max_epochs (int): number of epochs to run.
             batch_size (int): mini-batch size.
             lr (float): learning rate passed to the optimizer. Used in every epoch when
-                lr_scheduler is None. If lr_scheduler is given, lr is ignored.
+                lr_scheduler is None. If lr_scheduler is given, lr is alpha0, the learning rate
+                of epoch 0, and the schedule gives the learning rate of the later epochs.
             lr_scheduler (object or None): learning rate schedule, e.g. ExponentialDecay from
-                optimizers.py. At the start of each epoch fit() calls lr_scheduler.get_alpha(i),
+                optimizers.py. At the start of each epoch fit() calls lr_scheduler.get_alpha(i, lr),
                 where i is the epoch index counted from 0, and passes the result to
                 optimizer.step() for all mini-batches of that epoch. Default None (constant lr).
             augment (bool): if True, each training mini-batch is randomly shifted by up to 2 pixels
@@ -246,6 +249,7 @@ class Sequential:
         acc_train_dict = {}
         acc_dev_dict = {}
         time_dict = {}
+        lr0 = lr  # alpha0 of the scheduler: it must stay fixed, so the decay does not compound
         for i in range(max_epochs):
             t0_epoch = time.perf_counter()
             batch_loader_train = get_minibatch(X_train, Y_train, batch_size, rng_data)
@@ -253,7 +257,7 @@ class Sequential:
             n_batches = 0
 
             if lr_scheduler is not None:
-                lr = lr_scheduler.get_alpha(i, lr)
+                lr = lr_scheduler.get_alpha(i, lr0)
 
             while True:
                 try:
@@ -371,7 +375,11 @@ class Sequential:
         'W<i>' and 'b<i>' (Dense, Conv2d; b only if the layer has a bias), and batch norm
         layers under 'gamma<i>', 'beta<i>', 'miu_run<i>' and 'std2_run<i>', where i is the
         position of the layer in self.layers. The running statistics are needed for test time.
-        The architecture, the cache and the gradients are not saved.
+        Layers inside the k-th ResidualBlock (k counts the blocks from 1) use the keys
+        'Block<k>-W<j>', 'Block<k>-b<j>', 'Block<k>-gamma<j>', 'Block<k>-beta<j>',
+        'Block<k>-miu_run<j>' and 'Block<k>-std2_run<j>', where j is the position of the layer in
+        block.layers, and the skip-path projection uses 'Block<k>-projectile-W' and
+        'Block<k>-projectile-b'. The architecture, the cache and the gradients are not saved.
 
         Args:
             name (str): file name without the extension, e.g. 'model' creates 'model.npz'.
@@ -381,6 +389,7 @@ class Sequential:
         """
         name = name + '.npz'
         dict_ = {}
+        block_count = 0
         for i, layer in enumerate(self.layers):
             if hasattr(layer, 'W'):
                 dict_[f'W{i}'] = layer.W
@@ -391,6 +400,23 @@ class Sequential:
                 dict_[f'beta{i}'] = layer.beta
                 dict_[f'miu_run{i}'] = layer.miu_run
                 dict_[f'std2_run{i}'] = layer.std2_run
+            if hasattr(layer, 'layers'):
+                block_count += 1
+                for j, layer_residual in enumerate(layer.layers):
+                    if hasattr(layer_residual, 'W'):
+                        dict_[f'Block{block_count}-W{j}'] = layer_residual.W
+                        if hasattr(layer_residual, 'b'):
+                            dict_[f'Block{block_count}-b{j}'] = layer_residual.b
+                    if hasattr(layer_residual, 'gamma') and hasattr(layer_residual, 'beta'):
+                        dict_[f'Block{block_count}-gamma{j}'] = layer_residual.gamma
+                        dict_[f'Block{block_count}-beta{j}'] = layer_residual.beta
+                        dict_[f'Block{block_count}-miu_run{j}'] = layer_residual.miu_run
+                        dict_[f'Block{block_count}-std2_run{j}'] = layer_residual.std2_run
+                if layer.project:
+                    dict_[f'Block{block_count}-projectile-W'] = layer.projectile.W
+                    dict_[f'Block{block_count}-projectile-b'] = layer.projectile.b
+
+
         np.savez(name, **dict_)
 
     def load_weights(self, file_name):
@@ -413,6 +439,7 @@ class Sequential:
             None.
         """
         with np.load(file_name) as data:
+            block_count = 0
             for i, layer in enumerate(self.layers):
                 if hasattr(layer, 'W'):
                     assert (layer.W).shape == (data['W' + str(i)]).shape
@@ -427,6 +454,21 @@ class Sequential:
                     layer.beta = data['beta' + str(i)]
                     layer.miu_run = data['miu_run' + str(i)]
                     layer.std2_run = data['std2_run' + str(i)]
+                if hasattr(layer, 'layers'):
+                    block_count += 1
+                    for j, layer_residual in enumerate(layer.layers):
+                        if hasattr(layer_residual, 'W'):
+                            layer_residual.W = data[f'Block{block_count}-W{j}']
+                            if hasattr(layer_residual, 'b'):
+                                layer_residual.b = data[f'Block{block_count}-b{j}']
+                        if hasattr(layer_residual, 'gamma') and hasattr(layer_residual, 'beta'):
+                            layer_residual.gamma = data[f'Block{block_count}-gamma{j}']
+                            layer_residual.beta = data[f'Block{block_count}-beta{j}']
+                            layer_residual.miu_run = data[f'Block{block_count}-miu_run{j}']
+                            layer_residual.std2_run = data[f'Block{block_count}-std2_run{j}']
+                    if layer.project:
+                        layer.projectile.W = data[f'Block{block_count}-projectile-W']
+                        layer.projectile.b = data[f'Block{block_count}-projectile-b']
 
     def l2_penalty(self, loss, m):
         """Add the L2 penalty to a mean loss: loss + (l2_lambda / (2m)) * sum of W**2 over all layers with W.
@@ -447,4 +489,12 @@ class Sequential:
         """
         if self.l2_lambda is None:
             raise ValueError('L2 lambda not defined')
-        return loss + (self.l2_lambda/(2*m)) *  sum([np.sum(layer.W**2) for layer in self.layers if hasattr(layer, 'W')])
+        
+        squared_sum = sum([np.sum(layer.W**2) for layer in self.layers if hasattr(layer, 'W')])
+        for layer in self.layers:
+            if hasattr(layer, 'layers'):
+                squared_sum += sum([np.sum(layer_res.W**2) for layer_res in layer.layers if hasattr(layer_res, 'W')])
+                if layer.project:
+                    squared_sum += np.sum(layer.projectile.W**2)
+
+        return loss + (self.l2_lambda/(2*m)) * squared_sum
