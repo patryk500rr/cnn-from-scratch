@@ -248,7 +248,7 @@ class Dropout:
         if training==True:
             rng = self.rng
 
-            d = (rng.random(A.shape) < self.keepprob) / self.keepprob
+            d = (rng.random(A.shape) < self.keepprob).astype(A.dtype) / self.keepprob  # same dtype as A
             self.cache['d'] = d
             return A * d
         else:
@@ -1222,7 +1222,7 @@ class Conv2d:
             self.grads['db'] = np.sum(dZ, axis=(0, 1, 2))
 
         dcols = (dZ_mat @ self.W.reshape(-1, n_C).T).reshape(m, n_H, n_W, f, f, n_C_prev)
-        dA_pad = np.zeros((m, n_H_prev + 2 * p, n_W_prev + 2 * p, n_C_prev))
+        dA_pad = np.zeros((m, n_H_prev + 2 * p, n_W_prev + 2 * p, n_C_prev), dtype=dZ.dtype)
         for a in range(f):
             for b in range(f):
                 dA_pad[:, a: a + s * n_H: s, b: b + s * n_W: s, :] += dcols[:, :, :, a, b, :]
@@ -1431,11 +1431,23 @@ class ResidualBlock:
     same shape as X. If the number of channels changes (e.g. 4 -> 8), a 1x1 convolution
     (self.projectile) maps X to the new channel count, and the output is F(X) + P(X).
 
-    The block assumes that F keeps the height and width of its input, because the projection
-    is 1x1 with stride 1 and changes only the channel count. Downsampling should be done
+    The block works for convolutional inputs (m, H, W, C) and for Dense inputs (m, n). For
+    Dense inputs the projection is a Dense layer (n_in -> n_out) and the main path F can use
+    Dense, BatchNorm2d(axes=0), ReLU and Dropout. F may change only the last axis (channels
+    or neurons); build() raises ValueError if the height, the width or the number of axes
+    changes, because the projection is 1x1 with stride 1. Downsampling should be done
     outside the block.
 
-    Example:
+    Example (Dense):
+        block = ResidualBlock([
+            Dense(64, bias=False, init=he),
+            BatchNorm2d(axes=0),
+            ReLU(),
+            Dense(64, bias=False, init=he),
+            BatchNorm2d(axes=0),
+        ])
+
+    Example (conv):
         block = ResidualBlock([
             Conv2d(8, f=3, s=1, p='same', bias=False, init=he),
             BatchNorm2d(axes=(0, 1, 2)),
@@ -1449,7 +1461,8 @@ class ResidualBlock:
             implement forward, backward, build and name().
         project (bool): True if the skip path needs a projection (input and output shapes
             differ). Set in build().
-        projectile (Conv2d): 1x1 convolution on the skip path. Exists only if project is True.
+        projectile (Conv2d or Dense): projection on the skip path, a 1x1 convolution for conv
+            inputs and a Dense layer for (n,) inputs. Exists only if project is True.
     """
 
     def __init__(self, layers):
@@ -1533,11 +1546,17 @@ class ResidualBlock:
                 output_shape_l, nparams_layer = layer.build(input_shape_l, return_nparams=True)
             input_shape_l = output_shape_l
         output_shape = output_shape_l
+        if len(input_shape) != len(output_shape) or input_shape[:-1] != output_shape[:-1]:
+            raise ValueError(f'ResidualBlock can change only the last axis (channels or neurons), '
+                             f'got {input_shape} -> {output_shape}')
         self.project = False
         if input_shape != output_shape:
             self.project = True
-            n_C_out = output_shape[-1]
-            self.projectile = Conv2d(n_C_out, f=1, s=1, p=0, bias=True, init=he)
+            n_out = output_shape[-1]
+            if len(input_shape) == 1:  # Dense input (n,): projection is a Dense layer
+                self.projectile = Dense(n_out, bias=True, init=he)
+            else:  # conv input (H, W, C): projection is a 1x1 convolution
+                self.projectile = Conv2d(n_out, f=1, s=1, p=0, bias=True, init=he)
             _, nparams_layer = self.projectile.build(input_shape, rng=rng, return_nparams=True)
             nparams += nparams_layer
         if return_nparams:

@@ -135,6 +135,32 @@ class Sequential:
 
             input_shape = output_shape
 
+    def astype(self, dtype):
+        """Cast all weights and running statistics to dtype, e.g. 'float32'. Call after build().
+
+        build() creates float64 weights. If the data is float32 but the weights stay float64,
+        numpy converts every product back to float64 and nothing is gained. Layers inside a
+        ResidualBlock and its projection are converted too. Call it before creating the
+        optimizer, because Adam and momentum create their state with the dtype of the weights.
+
+        Args:
+            dtype (str or np.dtype): target dtype, e.g. 'float32' or 'float64'.
+
+        Returns:
+            None.
+        """
+        names = ('W', 'b', 'gamma', 'beta', 'miu_run', 'std2_run')
+        for layer in self.layers:
+            group = [layer]
+            if hasattr(layer, 'layers'):
+                group += layer.layers
+                if layer.project:
+                    group.append(layer.projectile)
+            for l in group:
+                for name in names:
+                    if hasattr(l, name):
+                        setattr(l, name, getattr(l, name).astype(dtype))
+
     def summary(self):
         """Return the parameter count and the shapes of every layer.
 

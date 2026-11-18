@@ -36,14 +36,26 @@ cd src
 jupyter notebook main.ipynb
 ```
 
-Strojenie hiperparametrów (random search), wyniki dopisywane do `outputs/tuning.csv`:
+Strojenie hiperparametrów (random search), wyniki dopisywane do `outputs/tuning.csv`. Podajesz
+listę warstw w kolejności, klasę optymalizatora i opcjonalnie harmonogram lr. `tuning.py` sam
+dobiera hiperparametry, które mają sens dla tej sieci (lr, λ, batch size, augmentacja, bety
+optymalizatora, liczba filtrów i rozmiar filtra w każdym Conv2d, neurony w ukrytych Dense,
+keep_prob w każdym Dropout):
+
+```python
+from tuning import list_hyperparameters, main
+list_hyperparameters(layers, Adam)           # wypisuje przeszukiwane hiperparametry i zakresy
+main(layers, Adam, n_runs=20, data=data)     # space={...} zmienia zakres albo ustala wartość
+```
+
+Z terminala (domyślne warstwy z `default_layers()`):
 
 ```bash
 python3 src/tuning.py
 ```
 
-Można też wywołać `tuning.main(...)` z notebooka, podając już wczytane dane (`data=`)
-i własną ścieżkę wyniku (`out_path=`).
+Argument `data=` to szóstka z `load_data`, a `out_path=` to własna ścieżka wyniku. Plik CSV ma
+kolumny zależne od przestrzeni, więc inna sieć wymaga innego `out_path`.
 
 ## Struktura
 

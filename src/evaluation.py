@@ -62,7 +62,10 @@ def compare_models(outputs, names=None, lrs=None, smooth_beta=0.8, title='Porów
     colors = plt.cm.tab10(np.arange(n_models) % 10)
 
     histories = []
-    for output in outputs:
+    for i, output in enumerate(outputs):
+        if len(output) == 0:
+            raise ValueError(f"outputs[{i}] ({names[i]}) is empty: call fit(..., return_=['all']) "
+                             f"for this model")
         J_history, accuracy_history = output[0][0], output[0][1]
         J_train, J_dev = J_history
         acc_train, acc_dev = accuracy_history
