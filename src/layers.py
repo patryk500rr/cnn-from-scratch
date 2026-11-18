@@ -5,6 +5,7 @@ store their gradients in self.grads. Shapes use channels-last (m, ...) batches.
 """
 import numpy as np
 from init import he, xavier, scaled_normal
+import inspect
 
 
 def _check_init(init, scale):
@@ -1421,3 +1422,162 @@ class BatchNorm2d:
             str: 'BatchNorm2d'.
         """
         return 'BatchNorm2d'
+    
+class ResidualBlock:
+    """Residual block: a sub-network whose output is added to its input (skip connection).
+
+    The block computes S = F(X) + X, where F is the sequence of layers passed to the
+    constructor and X is the block input. The skip path is the identity when F(X) has the
+    same shape as X. If the number of channels changes (e.g. 4 -> 8), a 1x1 convolution
+    (self.projectile) maps X to the new channel count, and the output is F(X) + P(X).
+
+    The block assumes that F keeps the height and width of its input, because the projection
+    is 1x1 with stride 1 and changes only the channel count. Downsampling should be done
+    outside the block.
+
+    Example:
+        block = ResidualBlock([
+            Conv2d(8, f=3, s=1, p='same', bias=False, init=he),
+            BatchNorm2d(axes=(0, 1, 2)),
+            ReLU(),
+            Conv2d(8, f=3, s=1, p='same', bias=False, init=he),
+            BatchNorm2d(axes=(0, 1, 2)),
+        ])
+
+    Attributes:
+        layers (list): layers of the main path F, in order from input to output. Each must
+            implement forward, backward, build and name().
+        project (bool): True if the skip path needs a projection (input and output shapes
+            differ). Set in build().
+        projectile (Conv2d): 1x1 convolution on the skip path. Exists only if project is True.
+    """
+
+    def __init__(self, layers):
+        """Store the layers of the main path. Weights are created later, in build().
+
+        Args:
+            layers (list): layer objects in order, from input to output.
+        """
+        self.pairs = {}
+        self.layers_W = {}
+        self.layers_b = {}
+        self.layers_gamma = {}
+        self.layers_beta = {}
+        self.layers = layers
+        # self.layers_names = [layer.__name__ for layer in layers]
+
+    def forward(self, A, training:bool):
+        """Compute S = F(X) + X (or F(X) + P(X) if a projection is needed).
+
+        Args:
+            A (np.ndarray): block input X, shape (m, H, W, C).
+            training (bool): passed to the layers that accept it (BatchNorm2d, Dropout).
+
+        Returns:
+            np.ndarray: block output S, shape (m, H, W, C_out), where C_out is the channel
+                count of the last layer of the main path.
+        """
+        identity = A.copy()
+        for layer in self.layers:   
+            if 'training' in inspect.signature(layer.forward).parameters:
+                A = layer.forward(A, training)
+            else:
+                A = layer.forward(A)
+        
+        if self.project:
+            identity = self.projectile.forward(identity)
+        S = A + identity
+        return S
+    
+    def backward(self, dA):
+        """Backpropagate through the main path and the skip path, and add the two gradients.
+
+        dX = dF/dX applied to dS, plus dS itself on the identity skip path, or plus
+        P.backward(dS) if a projection is used. Must be called after forward(), because
+        the layers keep the values they need in their caches.
+
+        Args:
+            dA (np.ndarray): gradient w.r.t. the block output S, shape (m, H, W, C_out).
+
+        Returns:
+            np.ndarray: gradient w.r.t. the block input X, shape (m, H, W, C).
+        """
+        dS = dA
+        for i, layer in enumerate(reversed(self.layers)):
+            dS_prev = layer.backward(dS)
+            dS = dS_prev
+        if self.project:
+            return dS + self.projectile.backward(dA)
+        else:
+            return dS + dA
+    
+    def build(self, input_shape, rng, return_nparams=False):
+        """Build the layers of the main path in order, then the projection if one is needed.
+
+        Args:
+            input_shape (tuple): shape of one example without the batch axis, e.g. (28, 28, 8).
+            rng (np.random.Generator): generator used to initialize the weights.
+            return_nparams (bool): if True, also return the number of parameters of the block.
+
+        Returns:
+            tuple or tuple of (tuple, int): output shape of the block, e.g. (28, 28, 8). If
+                return_nparams is True, returns (output_shape, nparams).
+        """
+        input_shape_l = input_shape
+        nparams = 0
+        for layer in self.layers:
+            if 'rng' in inspect.signature(layer.build).parameters:
+                output_shape_l, nparams_layer = layer.build(input_shape_l, rng, return_nparams=True)
+                nparams += nparams_layer
+            else:
+                output_shape_l, nparams_layer = layer.build(input_shape_l, return_nparams=True)
+            input_shape_l = output_shape_l
+        output_shape = output_shape_l
+        self.project = False
+        if input_shape != output_shape:
+            self.project = True
+            n_C_out = output_shape[-1]
+            self.projectile = Conv2d(n_C_out, f=1, s=1, p=0, bias=True, init=he)
+            _, nparams_layer = self.projectile.build(input_shape, rng=rng, return_nparams=True)
+            nparams += nparams_layer
+        if return_nparams:
+            return output_shape, nparams
+        else:
+            return output_shape
+    
+    def parameters(self):
+        """Collect (parameter, gradient) pairs of the layers in this block.
+
+        Call after backward(), because the gradients are read from the layers at this point.
+
+        Returns:
+            dict: maps a name to a (param, grad) tuple. Names are 'layer{j}.W', 'layer{j}.b',
+                'layer{j}.gamma' and 'layer{j}.beta', where j is the position of the layer in
+                self.layers, and 'projection.W' and 'projection.b' for the skip-path projection
+                (only if project is True). Sequential.parameters() adds the prefix 'Block{i}-'.
+
+        Note:
+            The L2 penalty does not include these weights yet: Sequential.backward() and
+            l2_penalty() only look at layers held directly by Sequential.
+        """
+        pairs = {}
+        for j, layer in enumerate(self.layers):
+            if hasattr(layer, 'W'):
+                pairs[f'layer{j}.W'] = (layer.W, layer.grads['dW'])
+                if hasattr(layer, 'b'):
+                    pairs[f'layer{j}.b'] = (layer.b, layer.grads['db'])
+            if hasattr(layer, 'gamma') and hasattr(layer, 'beta'):
+                pairs[f'layer{j}.gamma'] = (layer.gamma, layer.grads['dgamma'])
+                pairs[f'layer{j}.beta'] = (layer.beta, layer.grads['dbeta'])
+
+        if self.project:
+            pairs['projection.W'] = (self.projectile.W, self.projectile.grads['dW'])
+            pairs['projection.b'] = (self.projectile.b, self.projectile.grads['db'])
+        
+        return pairs
+    
+    def name(self):
+        """Return the name of the layer, used in summaries."""
+        return 'ResidualBlock'
+
+                

@@ -60,6 +60,8 @@ class Sequential:
         If l2_lambda is set, the gradient of the L2 penalty is added to dW of every layer with W:
         dW += (l2_lambda / m) * W, where m is the batch size. This matches l2_penalty(), whose
         value is (l2_lambda / (2m)) * sum(W**2), so the gradient and the penalty describe one function.
+        Only layers held directly by Sequential get this term. Weights inside a ResidualBlock
+        are not regularized yet.
 
         Args:
             dout (np.ndarray): gradient w.r.t. the output of the last layer, e.g. dZ, shape (m, n_classes).
@@ -74,22 +76,35 @@ class Sequential:
             for layer in self.layers:
                 if hasattr(layer, 'W'):
                     layer.grads['dW'] += (self.l2_lambda / m) * layer.W
+                if hasattr(layer, 'layers'):
+                    for layer_residual in layer.layers:
+                        if hasattr(layer_residual, 'W'):
+                            layer_residual.grads['dW'] += (self.l2_lambda / m) * layer_residual.W
+                    if layer.project:
+                        layer.projectile.grads['dW'] += (self.l2_lambda / m) * layer_residual.W
         return dout
 
     def parameters(self):
         """Collect (parameter, gradient) pairs from all layers that have weights.
 
-        Call after backward(), because the gradients are filled in there.
+        Call after backward(), because the gradients are filled in there. Layers that have a
+        `layers` attribute (ResidualBlock) return their own parameters(), and their names get
+        the prefix 'Block{i}-'.
 
         Returns:
             dict: maps a unique name to a (param, grad) tuple. The names are 'layer{i}.W' and
                 'layer{i}.b' for Dense and Conv2d (b only if the layer has a bias), and
                 'layer{i}.gamma' and 'layer{i}.beta' for BatchNorm2d, where i is the position
-                of the layer in self.layers. Layers without parameters contribute nothing.
+                of the layer in self.layers, and 'Block{i}-<name>' for the parameters inside
+                a ResidualBlock at position i. Layers without parameters contribute nothing.
                 Optimizers iterate over the values, grad_check over the items.
         """
         pairs = {}
         for i, layer in enumerate(self.layers):
+            if hasattr(layer, 'layers'):
+                pairs_block = layer.parameters()
+                for j in pairs_block:
+                    pairs[f'Block{i}-{j}'] = pairs_block[j]
             if hasattr(layer, 'W'):
                 pairs[f'layer{i}.W'] = (layer.W, layer.grads['dW'])  # (n_in, n_out), (n_in, n_out)
                 if hasattr(layer, 'b'):  # layers built with bias=False have no b
