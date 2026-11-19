@@ -706,7 +706,7 @@ class MaxPool2d_naive:
             np.ndarray: dA_prev, shape (m, n_H_prev, n_W_prev, n_C).
         """
         A_prev = self.cache['A_prev']
-        dA_prev = np.zeros_like(A_prev).astype('float64')
+        dA_prev = np.zeros_like(A_prev, dtype=dA.dtype)
         s = self.s
         f = self.f
 
@@ -804,7 +804,7 @@ class MaxPool2d:
         f = self.f
         idx = self.cache['idx']
         H_out, W_out = idx.shape[1], idx.shape[2]
-        dA_prev = np.zeros(self.cache['A_shape'], dtype='float64')
+        dA_prev = np.zeros(self.cache['A_shape'], dtype=dA.dtype)
 
         for a in range(f):
             for b in range(f):
@@ -902,7 +902,7 @@ class AvgPool2d_naive:
             np.ndarray: dA_prev, shape (m, n_H_prev, n_H_prev, n_C).
         """
         A_prev = self.cache['A_prev']
-        dA_prev = np.zeros_like(A_prev).astype('float64')
+        dA_prev = np.zeros_like(A_prev, dtype=dA.dtype)
         s = self.s
         f = self.f
 
@@ -1001,7 +1001,7 @@ class AvgPool2d:
 
         contribution = np.broadcast_to((dA[..., None, None] / f**2), (m, H_out, H_out, n_C_out, f, f))
         
-        dA_prev = np.zeros_like(A_prev).astype('float64')
+        dA_prev = np.zeros_like(A_prev, dtype=dA.dtype)
 
         for a in range(f):
             for b in range(f):

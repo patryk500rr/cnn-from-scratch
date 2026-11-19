@@ -306,7 +306,7 @@ class Sequential:
                 n_batches += 1
 
             J_train, acc_train = self.evaluate(loss, X_train, Y_train, batch_size)
-            J_dev, acc_dev = self.evaluate(loss, X_dev, Y_dev)
+            J_dev, acc_dev = self.evaluate(loss, X_dev, Y_dev, batch_size)  # in batches: a whole-dev forward pass of a conv net needs many GB
 
             J_dict_train[i] = J_train
             acc_train_dict[i] = acc_train

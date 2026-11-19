@@ -19,8 +19,10 @@ Terminal (runs the default layers below):
     python3 src/tuning.py
 """
 import copy
+import ast
 import csv
 import inspect
+import json
 import time
 from pathlib import Path
 
@@ -28,8 +30,8 @@ import numpy as np
 
 from data import load_data
 from init import he, xavier
-from layers import (BatchNorm2d, Conv2d, Dense, Dropout, Flatten, ReLU, ResidualBlock,
-                    SoftmaxCrossEntropy)
+from layers import (BatchNorm2d, Conv2d, Dense, Dropout, Flatten, GlobalAvgPool, MaxPool2d, ReLU,
+                    ResidualBlock, SoftmaxCrossEntropy)
 from model import Sequential
 from optimizers import Adam
 
@@ -40,7 +42,7 @@ OUT_DIR = ROOT / 'outputs'
 DTYPE = 'float32'  # data and weights; about 2x less memory traffic than float64
 
 # Names that are not layer attributes and not optimizer arguments.
-RESERVED = ('seed', 'lr', 'lambda', 'batch_size', 'augment', 'gamma')
+RESERVED = ('seed', 'lr', 'lambda', 'batch_size', 'augment', 'gamma', 'keepprob')
 
 # Search ranges used by default_space(). See describe_spec() for how a spec is read.
 FILTER_CHOICES = [8, 16, 32]
@@ -86,7 +88,7 @@ def _find_layer(layers, path):
     return layer
 
 
-def default_space(layers, optimizer=Adam, scheduler=None):
+def default_space(layers, optimizer=Adam, scheduler=None, share_keepprob=True):
     """Return the hyperparameters worth searching for this network, with default ranges.
 
     What is included depends on the layers and the optimizer:
@@ -96,7 +98,8 @@ def default_space(layers, optimizer=Adam, scheduler=None):
         layer<path>.n_C, layer<path>.f     for every Conv2d (number of filters, kernel size).
         layer<path>.n_out                  for every Dense except the last one (the output layer
                                            must keep its number of classes).
-        layer<path>.keepprob               for every Dropout.
+        keepprob                           ONE value used by every Dropout (share_keepprob=True), or
+        layer<path>.keepprob               one per Dropout (share_keepprob=False).
         layer<path>.scale                  for Conv2d / Dense built with init=scaled_normal.
     The path is the position of the layer in the list, e.g. layer0.n_C, or layer2.1.n_C for the
     second layer inside the ResidualBlock at position 2.
@@ -105,6 +108,8 @@ def default_space(layers, optimizer=Adam, scheduler=None):
         layers (list): layer objects, in the order of the network.
         optimizer (type): optimizer class, e.g. Adam. It is instantiated for each run.
         scheduler (type or None): learning rate schedule class, e.g. ExponentialDecay, or None.
+        share_keepprob (bool): if True (default), all Dropout layers get the same keep probability
+            and the space has one entry 'keepprob'. If False, each Dropout is searched separately.
 
     Returns:
         dict: name -> spec, in a fixed order.
@@ -131,10 +136,12 @@ def default_space(layers, optimizer=Adam, scheduler=None):
             space[f'layer{path}.f'] = ('choice', KERNEL_CHOICES)
         elif isinstance(layer, Dense) and path != str(last_dense):
             space[f'layer{path}.n_out'] = ('choice', UNIT_CHOICES)
-        elif isinstance(layer, Dropout):
+        elif isinstance(layer, Dropout) and not share_keepprob:
             space[f'layer{path}.keepprob'] = ('uniform', 0.5, 1.0)
         if isinstance(layer, (Conv2d, Dense)) and layer.scale is not None:
             space[f'layer{path}.scale'] = ('log', 1e-3, 1e-1)
+    if share_keepprob and any(isinstance(layer, Dropout) for _, layer in _walk_layers(layers)):
+        space['keepprob'] = ('uniform', 0.5, 1.0)
     return space
 
 
@@ -166,7 +173,7 @@ MEANING = {
     'n_C': 'number of filters',
     'f': 'kernel size',
     'n_out': 'number of neurons',
-    'keepprob': 'dropout keep probability',
+    'keepprob': 'dropout keep probability (the same for all Dropout layers when it has no layer prefix)',
     'scale': 'std of the initial weights (init=scaled_normal)',
 }
 
@@ -251,6 +258,36 @@ def sample_config(rng, space):
     return config
 
 
+# Values used for a hyperparameter that is not searched, when it is not set by the layers.
+DEFAULTS = {'lr': 1e-3, 'lambda': None, 'batch_size': 64, 'augment': False, 'gamma': 0.95}
+
+
+def default_value(name, layers, optimizer):
+    """Return the value a hyperparameter takes when it is not searched.
+
+    Layer attributes keep the value from the layer you passed (e.g. the n_C of your Conv2d),
+    optimizer arguments keep the default of the optimizer's constructor, and lr, lambda,
+    batch_size, augment and gamma use DEFAULTS.
+
+    Args:
+        name (str): name from the search space.
+        layers (list): layer objects, as passed to main().
+        optimizer (type): optimizer class.
+
+    Returns:
+        the fixed value.
+    """
+    if name in DEFAULTS:
+        return DEFAULTS[name]
+    if name == 'keepprob':  # shared: the value of the first Dropout in the list
+        return next(layer.keepprob for _, layer in _walk_layers(layers) if isinstance(layer, Dropout))
+    opt_params = inspect.signature(optimizer.__init__).parameters
+    if name in opt_params:
+        return opt_params[name].default
+    path, attr = name[len('layer'):].rsplit('.', 1)
+    return getattr(_find_layer(layers, path), attr)
+
+
 def check_space(layers, optimizer, scheduler, space):
     """Raise ValueError if a name in space does not match anything in the network.
 
@@ -308,10 +345,32 @@ def build_model(layers, config, rng, input_shape=(28, 28, 1)):
         if name.startswith('layer'):
             path, attr = name[len('layer'):].rsplit('.', 1)
             setattr(_find_layer(layers, path), attr, value)
+    if 'keepprob' in config:  # one value for every Dropout layer
+        for _, layer in _walk_layers(layers):
+            if isinstance(layer, Dropout):
+                layer.keepprob = config['keepprob']
     model = Sequential(layers, input_shape=input_shape, rng=rng, l2_lambda=config.get('lambda'))
     model.build()
     model.astype(DTYPE)  # build() makes float64 weights; cast them so float32 data stays float32
     return model
+
+
+def make_optimizer(config, optimizer, scheduler):
+    """Create the optimizer (and the schedule) for one configuration.
+
+    Args:
+        config (dict): configuration; keys that are arguments of the optimizer's constructor
+            (Beta1, Beta2, Beta, eps, clip_norm) are passed to it, and 'gamma' to the schedule.
+        optimizer (type): optimizer class.
+        scheduler (type or None): schedule class or None.
+
+    Returns:
+        tuple: (optimizer instance, schedule instance or None).
+    """
+    opt_params = inspect.signature(optimizer.__init__).parameters
+    opt = optimizer(**{k: v for k, v in config.items() if k in opt_params})
+    lr_scheduler = scheduler(gamma=config['gamma']) if scheduler is not None else None
+    return opt, lr_scheduler
 
 
 def run_experiment(config, layers, optimizer, scheduler, X_train, Y_train, X_dev, Y_dev,
@@ -338,9 +397,7 @@ def run_experiment(config, layers, optimizer, scheduler, X_train, Y_train, X_dev
     model = build_model(layers, config, rng, input_shape)
     n_params = model.summary()[0]['Total Parameters']
 
-    opt_params = inspect.signature(optimizer.__init__).parameters
-    opt = optimizer(**{k: v for k, v in config.items() if k in opt_params})
-    lr_scheduler = scheduler(gamma=config['gamma']) if scheduler is not None else None
+    opt, lr_scheduler = make_optimizer(config, optimizer, scheduler)
 
     start = time.perf_counter()
     output = model.fit(SoftmaxCrossEntropy(), X_train, Y_train, X_dev, Y_dev,
@@ -395,7 +452,8 @@ def flatten_result(result, columns):
 # Search
 # ----------------------------------------------------------------------------------------------
 
-def main(layers, optimizer=Adam, scheduler=None, space=None, n_runs=10, n_train=10000, seed=0,
+def main(layers, optimizer=Adam, scheduler=None, space=None, search=None, share_keepprob=True, name=None,
+         n_runs=10, n_train=10000, seed=0,
          max_epochs=3, input_shape=(28, 28, 1), data=None, out_path=None):
     """Run the random search, append every result to a CSV file and return them.
 
@@ -416,6 +474,15 @@ def main(layers, optimizer=Adam, scheduler=None, space=None, n_runs=10, n_train=
             or adds a new name: a spec to search it (see the top of the search space section) or
             a plain value to fix it, e.g. {'lr': 1e-3, 'layer0.n_C': ('choice', [4, 8])}.
             None uses default_space() unchanged.
+        search (list of str or None): names of the hyperparameters to search, e.g.
+            ['lr', 'lambda']. All the others are fixed: layer attributes keep the value from
+            your layers, optimizer arguments keep the optimizer's default, and lr, lambda,
+            batch_size, augment, gamma use DEFAULTS. None searches everything in the space.
+        share_keepprob (bool): True (default): all Dropout layers use the same keep probability,
+            searched as one hyperparameter 'keepprob'. False: one per Dropout layer.
+        name (str or None): file name of the CSV inside outputs/, e.g. 'tuning_mlp' or
+            'tuning_mlp.csv' (.csv is added if missing). Ignored if out_path is given.
+            None uses 'tuning.csv'.
         n_runs (int): number of random configurations to try.
         n_train (int): size of the training subset used by every run.
         seed (int): seed of the generator that draws the configurations.
@@ -425,15 +492,24 @@ def main(layers, optimizer=Adam, scheduler=None, space=None, n_runs=10, n_train=
             (X_train, X_dev, X_test, Y_train, Y_dev, Y_test). X_test is not used. If None,
             the data is loaded from the CSV files in data/.
         out_path (str, pathlib.Path or None): CSV file the results are appended to. If None,
-            outputs/tuning.csv is used.
+            outputs/<name> is used (outputs/tuning.csv if name is None).
 
     Returns:
         list of dict: one result per run, as returned by run_experiment(), plus the key 'run'.
     """
-    full_space = default_space(layers, optimizer, scheduler)
+    full_space = default_space(layers, optimizer, scheduler, share_keepprob)
     full_space.update(space or {})
     check_space(layers, optimizer, scheduler, full_space)
-    print(f'Search space ({len(full_space)} hyperparameters):')
+    if search is not None:
+        unknown = [hp for hp in search if hp not in full_space]
+        if unknown:
+            raise ValueError(f'search has names that are not in the space: {unknown}. '
+                             f'Available: {list(full_space)}')
+        for hp, spec in full_space.items():  # not `name`: that is the argument with the CSV name
+            if hp not in search and isinstance(spec, tuple):
+                full_space[hp] = default_value(hp, layers, optimizer)
+    n_searched = sum(isinstance(spec, tuple) for spec in full_space.values())
+    print(f'Searched: {n_searched}, fixed: {len(full_space) - n_searched}')
     describe_space(full_space)
 
     if data is None:
@@ -445,7 +521,10 @@ def main(layers, optimizer=Adam, scheduler=None, space=None, n_runs=10, n_train=
 
     columns = csv_columns(full_space)
     rng = np.random.default_rng(seed)
-    out_path = OUT_DIR / 'tuning.csv' if out_path is None else Path(out_path)
+    if out_path is None:
+        file_name = 'tuning.csv' if name is None else (name if name.endswith('.csv') else name + '.csv')
+        out_path = OUT_DIR / file_name
+    out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     write_header = not out_path.exists() or out_path.stat().st_size == 0
     if not write_header:
@@ -472,6 +551,173 @@ def main(layers, optimizer=Adam, scheduler=None, space=None, n_runs=10, n_train=
                   f"(epoch {result['best_dev_epoch']}), params {result['n_params']}, "
                   f"{result['minutes']:.1f} min")
     return results
+
+
+# ----------------------------------------------------------------------------------------------
+# Best configuration, final training, saving and restoring
+# ----------------------------------------------------------------------------------------------
+
+def _parse(text):
+    """Turn a CSV cell back into a Python value: '' -> None, '8' -> 8, '0.1' -> 0.1, 'True' -> True."""
+    if text == '':
+        return None
+    try:
+        return ast.literal_eval(text)
+    except (ValueError, SyntaxError):
+        return text
+
+
+def best_config(csv_path, key='best_dev_acc'):
+    """Read a tuning CSV and return the configuration of the best run.
+
+    Args:
+        csv_path (str or pathlib.Path): file written by main().
+        key (str): metric column to maximize. Default 'best_dev_acc'.
+
+    Returns:
+        tuple: (config, metrics). config is a dict that can be passed to build_model() and
+            make_optimizer(); metrics is a dict with run, n_params, best_dev_acc, ... of that run.
+    """
+    with open(csv_path, newline='', encoding='utf-8') as f:
+        rows = list(csv.DictReader(f))
+    row = max(rows, key=lambda r: float(r[key]))
+    metrics = {k: _parse(row[k]) for k in ['run'] + METRIC_COLUMNS}
+    config = {k: _parse(v) for k, v in row.items() if k != 'run' and k not in METRIC_COLUMNS}
+    return config, metrics
+
+
+def layer_code(layer, indent=0):
+    """Return Python source that re-creates a layer, e.g. "Conv2d(32, f=3, s=1, p='same', ...)".
+
+    Args:
+        layer: a layer object (Conv2d, Dense, Dropout, BatchNorm2d, MaxPool2d, ReLU, Flatten,
+            GlobalAvgPool or ResidualBlock).
+        indent (int): number of spaces in front of the lines inside a ResidualBlock.
+
+    Returns:
+        str: one line, or several lines for a ResidualBlock.
+    """
+    if isinstance(layer, ResidualBlock):
+        pad = ' ' * (indent + 4)
+        inner = ',\n'.join(pad + layer_code(inner_layer, indent + 4) for inner_layer in layer.layers)
+        return f'ResidualBlock([\n{inner}])'
+    if isinstance(layer, (Conv2d, Dense)):
+        scale = f', scale={layer.scale}' if layer.scale is not None else ''
+        if isinstance(layer, Conv2d):
+            return (f"Conv2d({layer.n_C}, f={layer.f}, s={layer.s}, p={layer.p!r}, bias={layer.bias}, "
+                    f"init={layer.init.__name__}{scale})")
+        return f"Dense({layer.n_out}, bias={layer.bias}, init={layer.init.__name__}{scale})"
+    if isinstance(layer, Dropout):
+        return f'Dropout({layer.keepprob})'
+    if isinstance(layer, BatchNorm2d):
+        return f'BatchNorm2d(axes={layer.axes}, momentum={layer.momentum})'
+    if isinstance(layer, MaxPool2d):
+        return f'MaxPool2d(f={layer.f}, s={layer.s})'
+    return f'{type(layer).__name__}()'
+
+
+def architecture_code(model):
+    """Return the whole network as Python source (one layer per line), for the architecture docs.
+
+    The result is a list literal that you can paste into a notebook to rebuild the exact
+    network, then call model.load_weights() on the saved .npz file.
+
+    Args:
+        model (Sequential): built model.
+
+    Returns:
+        str: source of the layer list.
+    """
+    return '[' + ',\n '.join(layer_code(layer, indent=1) for layer in model.layers) + ']'
+
+
+def train_final(layers, config, name, X_train, Y_train, X_dev, Y_dev, optimizer=Adam, scheduler=None,
+                epochs=8, input_shape=(28, 28, 1), out_dir=None):
+    """Train one configuration on the given data, then save the weights and a description.
+
+    Writes two files into out_dir (default: ROOT / 'trained_models'):
+        <name>.npz   weights, written with Sequential.save()
+        <name>.json  everything needed to restore and describe the model: the configuration, the
+                     architecture as Python source, n_params, final metrics, training time and the
+                     per-epoch history (loss and accuracy on train and dev).
+
+    Args:
+        layers (list): layer templates, as passed to main().
+        config (dict): hyperparameters, e.g. from best_config().
+        name (str): file name without extension, e.g. 'conv_deep'.
+        X_train, Y_train, X_dev, Y_dev (np.ndarray): data, one-hot labels.
+        optimizer (type): optimizer class.
+        scheduler (type or None): schedule class or None.
+        epochs (int): number of epochs.
+        input_shape (tuple): shape of one example without the batch axis.
+        out_dir (str, pathlib.Path or None): folder for the files, created if missing.
+
+    Returns:
+        dict: the content of the JSON file (history keys are epochs as ints).
+    """
+    out_dir = ROOT / 'trained_models' if out_dir is None else Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    rng = np.random.default_rng(config['seed'])
+    model = build_model(layers, config, rng, input_shape)
+    n_params = int(model.summary()[0]['Total Parameters'])
+    opt, lr_scheduler = make_optimizer(config, optimizer, scheduler)
+
+    start = time.perf_counter()
+    output = model.fit(SoftmaxCrossEntropy(), X_train, Y_train, X_dev, Y_dev,
+                       optimizer=opt, max_epochs=epochs,
+                       batch_size=config.get('batch_size', 64), lr=config['lr'],
+                       lr_scheduler=lr_scheduler, augment=config.get('augment', False),
+                       return_=['all'], print_epochs=1, seed=config['seed'])
+    minutes = (time.perf_counter() - start) / 60
+    (J_train, J_dev), (acc_train, acc_dev), _ = output[0]
+
+    model.save(str(out_dir / name))
+    best_epoch = max(acc_dev, key=acc_dev.get)
+    record = {
+        'name': name, 'config': config, 'optimizer': optimizer.__name__,
+        'scheduler': None if scheduler is None else scheduler.__name__, 'epochs': epochs,
+        'input_shape': list(input_shape), 'n_params': n_params, 'minutes': minutes,
+        'best_dev_acc': float(acc_dev[best_epoch]), 'best_dev_epoch': int(best_epoch),
+        'final_train_acc': float(acc_train[epochs - 1]), 'final_dev_acc': float(acc_dev[epochs - 1]),
+        'architecture': architecture_code(model),
+        'history': {'J_train': {int(k): float(v) for k, v in J_train.items()},
+                    'J_dev': {int(k): float(v) for k, v in J_dev.items()},
+                    'acc_train': {int(k): float(v) for k, v in acc_train.items()},
+                    'acc_dev': {int(k): float(v) for k, v in acc_dev.items()}},
+    }
+    with open(out_dir / f'{name}.json', 'w', encoding='utf-8') as f:
+        json.dump(record, f, indent=1, ensure_ascii=False)
+    return record
+
+
+def load_record(name, out_dir=None):
+    """Read <name>.json written by train_final(); history keys are turned back into ints."""
+    out_dir = ROOT / 'trained_models' if out_dir is None else Path(out_dir)
+    with open(out_dir / f'{name}.json', encoding='utf-8') as f:
+        record = json.load(f)
+    record['history'] = {k: {int(e): v for e, v in h.items()} for k, h in record['history'].items()}
+    return record
+
+
+def load_trained(layers, name, out_dir=None):
+    """Rebuild a model saved by train_final() and load its weights.
+
+    Args:
+        layers (list): the same layer templates that were used for training (the dict entry
+            from your notebook). The saved configuration is applied to a copy of them.
+        name (str): file name without extension, e.g. 'conv_deep'.
+        out_dir (str, pathlib.Path or None): folder with <name>.npz and <name>.json.
+
+    Returns:
+        Sequential: model ready for evaluate() / predict(). It is in test mode by default.
+    """
+    out_dir = ROOT / 'trained_models' if out_dir is None else Path(out_dir)
+    record = load_record(name, out_dir)
+    model = build_model(layers, record['config'], np.random.default_rng(record['config']['seed']),
+                        tuple(record['input_shape']))
+    model.load_weights(str(out_dir / f'{name}.npz'))
+    return model
 
 
 def default_layers():
