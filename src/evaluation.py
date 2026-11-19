@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 from utils import ewa
 from layers import SoftmaxCrossEntropy
+from data import get_minibatch
 
 
 def accuracy(Y_hat, Y):
@@ -286,3 +287,121 @@ def plot_gradients(model, X, Y, title='Gradienty w warstwach', return_fig=False)
 
     if return_fig:
         return fig
+    
+def class_mismatch(model, data, batchsize=64, plot=False, labels_name=None, return_wrong_classified=False):
+    """Count correct and incorrect predictions separately for each true class.
+
+    The data is passed through the model in mini-batches in the original order (no shuffling),
+    in inference mode.
+
+    Args:
+        model (Sequential): model with a forward(X) method returning class scores of shape (m, n_classes).
+        data (tuple): (X, Y) with inputs of shape (m, ...) and one-hot labels of shape (m, n_classes).
+        batchsize (int): mini-batch size used for the forward pass.
+        plot (bool): if True, show a stacked bar chart per class (green = correct, red = incorrect
+            on top of it, so the bar height is the number of examples of the class).
+        labels_name (dict or None): {class index: name} used for the x-axis labels. If None,
+            class indices are used.
+        return_wrong_classified (bool): not used at the moment, the same dictionary is returned
+            in both cases.
+
+    Returns:
+        dict: keys '<class> correct' and '<class> incorrect' (for example '6 incorrect'), values are
+            the numbers of examples of that true class, sorted by key.
+    """
+    X, Y = data
+    data_loader = get_minibatch(X, Y, size=batchsize)
+    labels_dict = {}
+    labels = np.unique(np.argmax(Y, axis=1))
+    for label in labels:
+        labels_dict[f'{label} correct'] = 0
+        labels_dict[f'{label} incorrect'] = 0
+    n_batch = 0
+    while True:
+        try:
+            X_minibatch, Y_minibatch = next(data_loader)
+            Y_pred_minibatch, Y_minibatch = np.argmax(model.forward(X_minibatch), axis=1), np.argmax(Y_minibatch, axis=1)
+            for i, (y_pred, y) in enumerate(zip(Y_pred_minibatch, Y_minibatch)):
+                if y_pred == y:
+                    labels_dict[f'{y} correct'] += 1
+                else:
+                    labels_dict[f'{y} incorrect'] += 1
+            n_batch += 1
+        except StopIteration:
+            break
+
+    labels_dict = dict(sorted(labels_dict.items()))
+    if plot:
+        if labels_name is not None:
+            labels = list(labels_name.values())
+        fig, ax = plt.subplots()
+        correct = list(labels_dict.values())[0:-1:2]
+        incorrect = list(labels_dict.values())[1::2]
+        ax.bar(labels, correct, color='green', label='Correct')
+        ax.bar(labels, incorrect, bottom=correct, color='red', label='Incorrect')
+        if labels_name is None:
+            ax.set_xticks(np.arange(len(labels)))
+        ax.set_xlabel('Label')
+        ax.set_ylabel('Count')
+        ax.grid(alpha=0.3)
+        if labels_name is not None:
+            ax.tick_params(axis='x', labelrotation=45)
+        plt.legend()
+        plt.show()
+    
+    
+    if return_wrong_classified:
+        return labels_dict
+    else:
+        return labels_dict
+    
+def confusion_matrix(model, data, batch_size, return_idx=False):
+    """Confusion matrix of the model, with the dev/test indices of the examples in every cell.
+
+    Rows are the predicted classes and columns are the true classes. The first row and the first
+    column hold the class labels (header), so the counts start at matrix[1:, 1:] and the cell for
+    "predicted p, true t" is matrix[p + 1, t + 1]. Classes must be numbered 0..n-1 without gaps.
+    The data is not shuffled and the model runs in inference mode.
+
+    Args:
+        model (Sequential): model with a forward(X) method returning class scores of shape (m, n_classes).
+        data (tuple): (X, Y_onehot) with inputs of shape (m, ...) and one-hot labels of shape (m, n_classes).
+        batch_size (int): mini-batch size used for the forward pass.
+        return_idx (bool): if True, also return the indices of the examples in each cell.
+
+    Returns:
+        np.ndarray: integer matrix of shape (n_classes + 1, n_classes + 1). If return_idx is True,
+            a tuple (matrix, matrix_idx), where matrix_idx has shape (n_classes + 1, n_classes + 1, m)
+            and matrix_idx[p + 1, t + 1] holds the indices (into X) of the examples predicted as p
+            with true class t, the other places are -1. Select them with idx = matrix_idx[p + 1, t + 1];
+            idx = idx[idx >= 0]. Memory: (n_classes + 1)^2 * m integers.
+    """
+    X, Y_onehot = data
+    dataloader = get_minibatch(X, Y_onehot, size=batch_size)
+    labels = np.sort(np.unique(np.argmax(Y_onehot, axis=1)))
+    matrix = np.zeros((len(labels) + 1, len(labels) + 1))
+    matrix[1:, 0] = labels # columns are true values
+    matrix[0, 1:] = labels # rows are predictions
+    matrix[0, 0] = 0
+    matrix_idx = np.full((len(labels) + 1, len(labels) + 1, len(data[0])), fill_value=-1)
+    batch_i = 0
+    while True:
+        try:
+            X_minibatch, Y_minibatch_onehot = next(dataloader)
+            Z_minibatch_onehot = model.forward(X_minibatch)
+            Y_pred, Y = np.argmax(Z_minibatch_onehot, axis=1), np.argmax(Y_minibatch_onehot, axis=1)
+            np.add.at(matrix, (Y_pred + 1, Y + 1), 1)  # add.at counts repeated pairs; matrix[i, j] += 1 would not
+            for i, (y_pred, y) in enumerate(zip(Y_pred, Y)):
+                idx = batch_i + i
+                matrix_idx[y_pred + 1, y + 1, idx] = idx
+            batch_i += len(Y)
+        except StopIteration:
+            break
+    if return_idx:
+        return matrix.astype(int), matrix_idx.astype(int)
+    else:
+        return matrix.astype(int)
+
+
+
+
