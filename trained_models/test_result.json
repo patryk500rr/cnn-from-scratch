@@ -1,0 +1,8 @@
+{
+ "model": "conv_deep",
+ "selected_by": "final dev accuracy (weights of the last epoch)",
+ "dev_acc": 0.9262,
+ "test_acc": 0.9271,
+ "test_loss": 0.2044551819562912,
+ "note": "Test set evaluated once, only for the model chosen on dev."
+}

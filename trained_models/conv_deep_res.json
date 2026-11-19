@@ -1,0 +1,84 @@
+{
+ "name": "conv_deep_res",
+ "config": {
+  "seed": 649415,
+  "lr": 0.002146278041053843,
+  "lambda": 0.008279159394670351,
+  "batch_size": 64,
+  "augment": false,
+  "Beta1": 0.9490349540286752,
+  "Beta2": 0.999,
+  "layer0.n_C": 32,
+  "layer0.f": 3,
+  "layer3.0.n_C": 32,
+  "layer3.0.f": 3,
+  "layer3.3.n_C": 32,
+  "layer3.3.f": 3,
+  "layer7.0.n_C": 64,
+  "layer7.0.f": 3,
+  "layer7.3.n_C": 64,
+  "layer7.3.f": 3,
+  "layer11.0.n_C": 128,
+  "layer11.0.f": 3,
+  "layer11.3.n_C": 128,
+  "layer11.3.f": 3,
+  "keepprob": 0.9675362118938842
+ },
+ "optimizer": "Adam",
+ "scheduler": null,
+ "epochs": 8,
+ "input_shape": [
+  28,
+  28,
+  1
+ ],
+ "n_params": 318122,
+ "minutes": 18.58473112986685,
+ "best_dev_acc": 0.9244,
+ "best_dev_epoch": 6,
+ "final_train_acc": 0.9498545454545455,
+ "final_dev_acc": 0.9198,
+ "architecture": "[Conv2d(32, f=3, s=1, p='same', bias=False, init=he),\n BatchNorm2d(axes=(0, 1, 2), momentum=0.1),\n ReLU(),\n ResidualBlock([\n     Conv2d(32, f=3, s=1, p='same', bias=False, init=he),\n     BatchNorm2d(axes=(0, 1, 2), momentum=0.1),\n     ReLU(),\n     Conv2d(32, f=3, s=1, p='same', bias=False, init=he),\n     BatchNorm2d(axes=(0, 1, 2), momentum=0.1)]),\n ReLU(),\n MaxPool2d(f=2, s=2),\n Dropout(0.9675362118938842),\n ResidualBlock([\n     Conv2d(64, f=3, s=1, p='same', bias=False, init=he),\n     BatchNorm2d(axes=(0, 1, 2), momentum=0.1),\n     ReLU(),\n     Conv2d(64, f=3, s=1, p='same', bias=False, init=he),\n     BatchNorm2d(axes=(0, 1, 2), momentum=0.1)]),\n ReLU(),\n MaxPool2d(f=2, s=2),\n Dropout(0.9675362118938842),\n ResidualBlock([\n     Conv2d(128, f=3, s=1, p='same', bias=False, init=he),\n     BatchNorm2d(axes=(0, 1, 2), momentum=0.1),\n     ReLU(),\n     Conv2d(128, f=3, s=1, p='same', bias=False, init=he),\n     BatchNorm2d(axes=(0, 1, 2), momentum=0.1)]),\n ReLU(),\n MaxPool2d(f=2, s=2),\n Dropout(0.9675362118938842),\n Flatten(),\n Dense(10, bias=True, init=xavier)]",
+ "history": {
+  "J_train": {
+   "0": 0.27813470363616943,
+   "1": 0.22966718673706055,
+   "2": 0.20229186117649078,
+   "3": 0.18308386206626892,
+   "4": 0.18397781252861023,
+   "5": 0.1530243456363678,
+   "6": 0.1505434662103653,
+   "7": 0.1391577571630478
+  },
+  "J_dev": {
+   "0": 0.2927318513393402,
+   "1": 0.2554508447647095,
+   "2": 0.25372767448425293,
+   "3": 0.24158073961734772,
+   "4": 0.2425183802843094,
+   "5": 0.22380317747592926,
+   "6": 0.21733178198337555,
+   "7": 0.22783157229423523
+  },
+  "acc_train": {
+   "0": 0.8993272727272728,
+   "1": 0.9174727272727272,
+   "2": 0.9253818181818182,
+   "3": 0.9328545454545455,
+   "4": 0.9342363636363636,
+   "5": 0.9449818181818181,
+   "6": 0.9462909090909091,
+   "7": 0.9498545454545455
+  },
+  "acc_dev": {
+   "0": 0.8932,
+   "1": 0.914,
+   "2": 0.9042,
+   "3": 0.9156,
+   "4": 0.913,
+   "5": 0.9214,
+   "6": 0.9244,
+   "7": 0.9198
+  }
+ }
+}

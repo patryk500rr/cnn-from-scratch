@@ -1,0 +1,77 @@
+{
+ "name": "mlp_deep_res",
+ "config": {
+  "seed": 850624,
+  "lr": 0.0005746316330638134,
+  "lambda": 1.4584585665958855e-05,
+  "batch_size": 64,
+  "augment": false,
+  "Beta1": 0.9894924140876467,
+  "Beta2": 0.999,
+  "layer1.n_out": 256,
+  "layer4.0.n_out": 256,
+  "layer4.3.n_out": 256,
+  "layer7.0.n_out": 256,
+  "layer7.3.n_out": 256,
+  "layer10.0.n_out": 256,
+  "layer10.3.n_out": 256,
+  "keepprob": 0.9066351196001362
+ },
+ "optimizer": "Adam",
+ "scheduler": null,
+ "epochs": 8,
+ "input_shape": [
+  28,
+  28,
+  1
+ ],
+ "n_params": 600074,
+ "minutes": 0.37311078818311216,
+ "best_dev_acc": 0.9004,
+ "best_dev_epoch": 7,
+ "final_train_acc": 0.9327636363636364,
+ "final_dev_acc": 0.9004,
+ "architecture": "[Flatten(),\n Dense(256, bias=False, init=he),\n BatchNorm2d(axes=(0,), momentum=0.1),\n ReLU(),\n ResidualBlock([\n     Dense(256, bias=False, init=he),\n     BatchNorm2d(axes=(0,), momentum=0.1),\n     ReLU(),\n     Dense(256, bias=False, init=he),\n     BatchNorm2d(axes=(0,), momentum=0.1)]),\n ReLU(),\n Dropout(0.9066351196001362),\n ResidualBlock([\n     Dense(256, bias=False, init=he),\n     BatchNorm2d(axes=(0,), momentum=0.1),\n     ReLU(),\n     Dense(256, bias=False, init=he),\n     BatchNorm2d(axes=(0,), momentum=0.1)]),\n ReLU(),\n Dropout(0.9066351196001362),\n ResidualBlock([\n     Dense(256, bias=False, init=he),\n     BatchNorm2d(axes=(0,), momentum=0.1),\n     ReLU(),\n     Dense(256, bias=False, init=he),\n     BatchNorm2d(axes=(0,), momentum=0.1)]),\n ReLU(),\n Dropout(0.9066351196001362),\n Dense(10, bias=True, init=xavier)]",
+ "history": {
+  "J_train": {
+   "0": 0.33894598484039307,
+   "1": 0.3011370003223419,
+   "2": 0.2633192241191864,
+   "3": 0.24386684596538544,
+   "4": 0.23357360064983368,
+   "5": 0.21682365238666534,
+   "6": 0.20137335360050201,
+   "7": 0.18099366128444672
+  },
+  "J_dev": {
+   "0": 0.35433638095855713,
+   "1": 0.33273759484291077,
+   "2": 0.30461159348487854,
+   "3": 0.29618486762046814,
+   "4": 0.30108344554901123,
+   "5": 0.2901211678981781,
+   "6": 0.28641360998153687,
+   "7": 0.2743859887123108
+  },
+  "acc_train": {
+   "0": 0.8749272727272728,
+   "1": 0.888090909090909,
+   "2": 0.9017818181818181,
+   "3": 0.9090727272727273,
+   "4": 0.9118181818181819,
+   "5": 0.9194545454545454,
+   "6": 0.9232545454545454,
+   "7": 0.9327636363636364
+  },
+  "acc_dev": {
+   "0": 0.8752,
+   "1": 0.8784,
+   "2": 0.8898,
+   "3": 0.8916,
+   "4": 0.8886,
+   "5": 0.8938,
+   "6": 0.8936,
+   "7": 0.9004
+  }
+ }
+}

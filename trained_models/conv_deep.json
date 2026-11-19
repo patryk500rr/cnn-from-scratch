@@ -1,0 +1,82 @@
+{
+ "name": "conv_deep",
+ "config": {
+  "seed": 827374,
+  "lr": 0.0003579114483337561,
+  "lambda": 0.07771686176112379,
+  "batch_size": 64,
+  "augment": false,
+  "Beta1": 0.8561755068528097,
+  "Beta2": 0.999,
+  "layer0.n_C": 32,
+  "layer0.f": 3,
+  "layer3.n_C": 32,
+  "layer3.f": 3,
+  "layer8.n_C": 64,
+  "layer8.f": 3,
+  "layer11.n_C": 64,
+  "layer11.f": 3,
+  "layer16.n_C": 128,
+  "layer16.f": 3,
+  "layer19.n_C": 128,
+  "layer19.f": 3,
+  "keepprob": 0.9111869137715352
+ },
+ "optimizer": "Adam",
+ "scheduler": null,
+ "epochs": 8,
+ "input_shape": [
+  28,
+  28,
+  1
+ ],
+ "n_params": 298410,
+ "minutes": 13.573099289583237,
+ "best_dev_acc": 0.9262,
+ "best_dev_epoch": 7,
+ "final_train_acc": 0.9522,
+ "final_dev_acc": 0.9262,
+ "architecture": "[Conv2d(32, f=3, s=1, p='same', bias=False, init=he),\n BatchNorm2d(axes=(0, 1, 2), momentum=0.1),\n ReLU(),\n Conv2d(32, f=3, s=1, p='same', bias=False, init=he),\n BatchNorm2d(axes=(0, 1, 2), momentum=0.1),\n ReLU(),\n MaxPool2d(f=2, s=2),\n Dropout(0.9111869137715352),\n Conv2d(64, f=3, s=1, p='same', bias=False, init=he),\n BatchNorm2d(axes=(0, 1, 2), momentum=0.1),\n ReLU(),\n Conv2d(64, f=3, s=1, p='same', bias=False, init=he),\n BatchNorm2d(axes=(0, 1, 2), momentum=0.1),\n ReLU(),\n MaxPool2d(f=2, s=2),\n Dropout(0.9111869137715352),\n Conv2d(128, f=3, s=1, p='same', bias=False, init=he),\n BatchNorm2d(axes=(0, 1, 2), momentum=0.1),\n ReLU(),\n Conv2d(128, f=3, s=1, p='same', bias=False, init=he),\n BatchNorm2d(axes=(0, 1, 2), momentum=0.1),\n ReLU(),\n MaxPool2d(f=2, s=2),\n Dropout(0.9111869137715352),\n Flatten(),\n Dense(10, bias=True, init=xavier)]",
+ "history": {
+  "J_train": {
+   "0": 0.28549790382385254,
+   "1": 0.22398540377616882,
+   "2": 0.18911868333816528,
+   "3": 0.18015260994434357,
+   "4": 0.1788114309310913,
+   "5": 0.15615007281303406,
+   "6": 0.1730639487504959,
+   "7": 0.132675901055336
+  },
+  "J_dev": {
+   "0": 0.3001425862312317,
+   "1": 0.2501468062400818,
+   "2": 0.22429628670215607,
+   "3": 0.22272351384162903,
+   "4": 0.2326936572790146,
+   "5": 0.21523000299930573,
+   "6": 0.2443617880344391,
+   "7": 0.20957545936107635
+  },
+  "acc_train": {
+   "0": 0.8951454545454546,
+   "1": 0.9202,
+   "2": 0.9333636363636364,
+   "3": 0.9354,
+   "4": 0.9362181818181818,
+   "5": 0.9445818181818182,
+   "6": 0.9368363636363637,
+   "7": 0.9522
+  },
+  "acc_dev": {
+   "0": 0.8904,
+   "1": 0.9116,
+   "2": 0.9232,
+   "3": 0.9212,
+   "4": 0.9188,
+   "5": 0.924,
+   "6": 0.9132,
+   "7": 0.9262
+  }
+ }
+}
